@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/app"
+	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/redact"
 )
 
 func main() {
@@ -50,8 +51,16 @@ type httpsProxy struct {
 }
 
 func (p *httpsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ok, username := p.authenticate(r)
+	ok, username, reason := p.authenticate(r)
 	if !ok {
+		p.runtime.Logger.Warn(
+			"proxy auth rejected",
+			"reason", reason,
+			"username", redact.String(username),
+			"method", r.Method,
+			"target", r.Host,
+			"remote_addr", r.RemoteAddr,
+		)
 		w.Header().Set("Proxy-Authenticate", `Basic realm="VLF Browser Proxy"`)
 		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 		return
@@ -65,18 +74,21 @@ func (p *httpsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.handleForward(w, r, username)
 }
 
-func (p *httpsProxy) authenticate(r *http.Request) (bool, string) {
-	username, password, ok := parseProxyAuthorization(r.Header.Get("Proxy-Authorization"))
+func (p *httpsProxy) authenticate(r *http.Request) (bool, string, string) {
+	username, password, ok, reason := parseProxyAuthorization(r.Header.Get("Proxy-Authorization"))
 	if !ok {
-		return false, ""
+		return false, username, reason
 	}
 
 	valid, err := p.runtime.Service.ValidateProxyCredentials(r.Context(), username, password)
 	if err != nil {
 		p.runtime.Logger.Error("proxy credential validation failed", "error", err)
-		return false, ""
+		return false, username, "validation_error"
 	}
-	return valid, username
+	if !valid {
+		return false, username, "invalid_credentials"
+	}
+	return true, username, "valid"
 }
 
 func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, username string) {
@@ -160,22 +172,26 @@ func (p *httpsProxy) allowTarget(target string) bool {
 	return p.runtime.Service.AllowProxyDestination(host)
 }
 
-func parseProxyAuthorization(value string) (string, string, bool) {
+func parseProxyAuthorization(value string) (string, string, bool, string) {
+	if strings.TrimSpace(value) == "" {
+		return "", "", false, "missing_proxy_authorization"
+	}
+
 	scheme, encoded, ok := strings.Cut(strings.TrimSpace(value), " ")
 	if !ok || !equalFoldASCII(scheme, "basic") {
-		return "", "", false
+		return "", "", false, "unsupported_proxy_authorization"
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
-		return "", "", false
+		return "", "", false, "invalid_proxy_authorization"
 	}
 
 	username, password, ok := strings.Cut(string(decoded), ":")
 	if !ok || username == "" || password == "" {
-		return "", "", false
+		return username, "", false, "invalid_proxy_authorization"
 	}
-	return username, password, true
+	return username, password, true, "valid"
 }
 
 func pipe(a net.Conn, b net.Conn) {
