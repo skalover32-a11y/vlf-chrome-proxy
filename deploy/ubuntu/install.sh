@@ -122,8 +122,27 @@ EOF
   fi
 }
 
+check_port_available() {
+  local port="$1"
+  local label="$2"
+
+  if ss -ltn "( sport = :$port )" | tail -n +2 | grep -q .; then
+    log "$label port $port is already in use"
+    ss -ltnp "( sport = :$port )" || true
+    echo "Change $label port in $ENV_FILE and rerun the installer." >&2
+    return 1
+  fi
+}
+
+preflight_ports() {
+  load_env_file
+  check_port_available "${BACKEND_PORT:-8080}" "BACKEND_PORT"
+  check_port_available "${SOCKS5_PORT:-1080}" "SOCKS5_PORT"
+}
+
 start_stack() {
   log "building and starting docker compose stack"
+  preflight_ports
   docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build
 }
 
