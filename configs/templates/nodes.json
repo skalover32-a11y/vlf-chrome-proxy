@@ -6,7 +6,7 @@
       "country": "FI",
       "city": "Helsinki",
       "host": "proxy.example.com",
-      "proxy_port": 443,
+      "proxy_port": 1443,
       "proxy_scheme": "https",
       "supports_pac": false,
       "status": "online",

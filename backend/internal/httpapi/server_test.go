@@ -133,7 +133,7 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		Country:     "FI",
 		City:        "Helsinki",
 		Host:        "proxy.example.com",
-		ProxyPort:   443,
+		ProxyPort:   1443,
 		ProxyScheme: "https",
 		Status:      "online",
 		IsDefault:   true,

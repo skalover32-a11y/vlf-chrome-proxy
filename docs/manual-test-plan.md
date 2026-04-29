@@ -9,13 +9,13 @@
 5. Confirm response contains `session_token`, `nodes`, `default_node_id=node-1`, `default_mode=fixed_servers`.
 6. Call `GET /browser/session` with `Authorization: Bearer <session_token>`.
 7. Call `GET /browser/proxy-config?node_id=node-1&mode=fixed_servers` with the same bearer token.
-8. Verify the returned `scheme=https`, `port=443`, `username`, and `password`.
+8. Verify the returned `scheme=https`, `port=1443`, `username`, and `password`.
 
 ## HTTPS Proxy Checks
 
-1. Confirm TLS is reachable with `openssl s_client -connect proxy.example.com:443 -servername proxy.example.com </dev/null`.
-2. Confirm proxy auth fails without credentials with `curl -vk -x https://proxy.example.com:443 https://api.ipify.org`.
-3. Confirm proxy auth works with issued credentials using `curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:443 https://api.ipify.org`.
+1. Confirm TLS is reachable with `openssl s_client -connect proxy.example.com:1443 -servername proxy.example.com </dev/null`.
+2. Confirm proxy auth fails without credentials with `curl -vk -x https://proxy.example.com:1443 https://api.ipify.org`.
+3. Confirm proxy auth works with issued credentials using `curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:1443 https://api.ipify.org`.
 
 ## Chrome Extension Checks
 

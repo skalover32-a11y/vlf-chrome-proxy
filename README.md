@@ -102,7 +102,7 @@ The access/session model is unchanged by the HTTPS migration.
 - `status`, `latency_ms`
 - `is_default`
 
-For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `443`.
+For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `1443`.
 
 ## Required API Endpoints
 
@@ -139,7 +139,7 @@ Returns HTTPS proxy config:
 {
   "mode": "fixed_servers",
   "host": "proxy.example.com",
-  "port": 443,
+  "port": 1443,
   "scheme": "https",
   "username": "browser_u_xxx",
   "password": "browser_p_xxx",
@@ -245,9 +245,9 @@ What the installer does:
 
 - `ACCESS_LINK_BASE_URL`: public base URL used to form links like `/access/<token>`
 - `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
-- `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `443`
+- `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `1443`
 - `BACKEND_PORT`: public backend port, default `18080`
-- `HTTPS_PROXY_PORT`: host port mapped to the HTTPS proxy container, default `443`
+- `HTTPS_PROXY_PORT`: host port mapped to the HTTPS proxy container, default `1443`
 - `HTTPS_PROXY_TLS_CERT_PATH`: container path to proxy certificate
 - `HTTPS_PROXY_TLS_KEY_PATH`: container path to proxy private key
 - `TOKEN_PEPPER`: HMAC secret for access/session token hashing
@@ -272,13 +272,13 @@ curl -fsS http://127.0.0.1:18080/healthz
 Check HTTPS proxy TLS:
 
 ```bash
-openssl s_client -connect proxy.example.com:443 -servername proxy.example.com </dev/null
+openssl s_client -connect proxy.example.com:1443 -servername proxy.example.com </dev/null
 ```
 
 Check proxy auth with issued credentials:
 
 ```bash
-curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:443 https://api.ipify.org
+curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:1443 https://api.ipify.org
 ```
 
 ## HTTP Status Model

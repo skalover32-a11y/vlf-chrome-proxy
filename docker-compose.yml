@@ -26,7 +26,7 @@ services:
       SQLITE_PATH: /data/app.db
       NODE_CONFIG_PATH: /runtime/nodes.json
     ports:
-      - "${HTTPS_PROXY_PORT:-443}:443"
+      - "${HTTPS_PROXY_PORT:-1443}:443"
     volumes:
       - ./deploy/data:/data
       - ./deploy/runtime:/runtime

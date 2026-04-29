@@ -131,7 +131,7 @@ prepare_runtime() {
       "country": "${NODE_DEFAULT_COUNTRY:-FI}",
       "city": "${NODE_DEFAULT_CITY:-Helsinki}",
       "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
-      "proxy_port": ${PROXY_PUBLIC_PORT:-443},
+      "proxy_port": ${PROXY_PUBLIC_PORT:-1443},
       "proxy_scheme": "https",
       "supports_pac": false,
       "status": "online",
@@ -153,7 +153,7 @@ EOF
       "country": "${NODE_DEFAULT_COUNTRY:-FI}",
       "city": "${NODE_DEFAULT_CITY:-Helsinki}",
       "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
-      "proxy_port": ${PROXY_PUBLIC_PORT:-443},
+      "proxy_port": ${PROXY_PUBLIC_PORT:-1443},
       "proxy_scheme": "https",
       "supports_pac": false,
       "status": "online",
@@ -176,12 +176,18 @@ migrate_env_file() {
   set_env_value "HTTPS_PROXY_LISTEN_ADDR" "${HTTPS_PROXY_LISTEN_ADDR:-:443}"
   set_env_value "HTTPS_PROXY_TLS_CERT_PATH" "${HTTPS_PROXY_TLS_CERT_PATH:-/runtime/tls/proxy.crt}"
   set_env_value "HTTPS_PROXY_TLS_KEY_PATH" "${HTTPS_PROXY_TLS_KEY_PATH:-/runtime/tls/proxy.key}"
-  set_env_value "HTTPS_PROXY_PORT" "${HTTPS_PROXY_PORT:-443}"
+  local current_https_port
+  current_https_port="$(grep '^HTTPS_PROXY_PORT=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  if [ -z "$current_https_port" ] || [ "$current_https_port" = "443" ]; then
+    set_env_value "HTTPS_PROXY_PORT" "1443"
+  else
+    set_env_value "HTTPS_PROXY_PORT" "$current_https_port"
+  fi
 
   local current_public_port
   current_public_port="$(grep '^PROXY_PUBLIC_PORT=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
-  if [ -z "$current_public_port" ] || [ "$current_public_port" = "1080" ]; then
-    set_env_value "PROXY_PUBLIC_PORT" "443"
+  if [ -z "$current_public_port" ] || [ "$current_public_port" = "1080" ] || [ "$current_public_port" = "443" ]; then
+    set_env_value "PROXY_PUBLIC_PORT" "1443"
   fi
 }
 
@@ -220,7 +226,7 @@ check_port_available() {
 preflight_ports() {
   load_env_file
   check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
-  check_port_available "${HTTPS_PROXY_PORT:-443}" "HTTPS_PROXY_PORT"
+  check_port_available "${HTTPS_PROXY_PORT:-1443}" "HTTPS_PROXY_PORT"
 }
 
 start_stack() {
