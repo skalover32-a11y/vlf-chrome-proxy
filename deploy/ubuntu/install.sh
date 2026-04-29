@@ -14,6 +14,45 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+strip_wrapping_quotes() {
+  local value="$1"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s' "$value"
+}
+
+load_env_file() {
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim "$line")"
+    if [ -z "$line" ] || [[ "$line" == \#* ]]; then
+      continue
+    fi
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key="$(trim "${line%%=*}")"
+    value="${line#*=}"
+    value="$(trim "$value")"
+    value="$(strip_wrapping_quotes "$value")"
+
+    if [ -n "$key" ]; then
+      export "$key=$value"
+    fi
+  done < "$ENV_FILE"
+}
+
 install_docker() {
   if need_cmd docker && docker compose version >/dev/null 2>&1; then
     log "docker and docker compose already installed"
@@ -57,10 +96,7 @@ prepare_runtime() {
     log "edit $ENV_FILE and rerun if you need production values"
   fi
 
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  load_env_file
 
   if [ ! -f "$INSTALL_DIR/deploy/runtime/nodes.json" ]; then
     log "generating initial nodes.json from env"
@@ -92,10 +128,7 @@ start_stack() {
 }
 
 bootstrap_access_link() {
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  load_env_file
 
   if [ "${AUTO_CREATE_BOOTSTRAP_LINK:-false}" != "true" ]; then
     log "AUTO_CREATE_BOOTSTRAP_LINK is disabled, skipping bootstrap token creation"
@@ -130,4 +163,6 @@ main() {
   show_status
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
