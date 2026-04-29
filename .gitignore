@@ -1,0 +1,5 @@
+.env
+deploy/data/*
+deploy/runtime/*
+!deploy/runtime/.gitkeep
+!deploy/data/.gitkeep

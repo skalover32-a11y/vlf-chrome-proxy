@@ -1,0 +1,49 @@
+services:
+  api:
+    build:
+      context: ./backend
+      target: api
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    environment:
+      SQLITE_PATH: /data/app.db
+      NODE_CONFIG_PATH: /runtime/nodes.json
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./deploy/data:/data
+      - ./deploy/runtime:/runtime
+
+  socks5:
+    build:
+      context: ./backend
+      target: socks5d
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    environment:
+      SQLITE_PATH: /data/app.db
+      NODE_CONFIG_PATH: /runtime/nodes.json
+    ports:
+      - "${SOCKS5_PORT:-1080}:1080"
+    volumes:
+      - ./deploy/data:/data
+      - ./deploy/runtime:/runtime
+    depends_on:
+      - api
+
+  admin:
+    build:
+      context: ./backend
+      target: admin
+    env_file:
+      - ./.env
+    profiles:
+      - tools
+    environment:
+      SQLITE_PATH: /data/app.db
+      NODE_CONFIG_PATH: /runtime/nodes.json
+    volumes:
+      - ./deploy/data:/data
+      - ./deploy/runtime:/runtime

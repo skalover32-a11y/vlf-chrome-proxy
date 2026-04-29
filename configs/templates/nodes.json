@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    {
+      "id": "node-1",
+      "name": "Finland #1",
+      "country": "FI",
+      "city": "Helsinki",
+      "host": "proxy.example.com",
+      "proxy_port": 1080,
+      "proxy_scheme": "socks5",
+      "supports_pac": false,
+      "status": "online",
+      "latency_ms": 0,
+      "is_default": true
+    }
+  ]
+}
