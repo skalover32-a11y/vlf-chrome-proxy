@@ -15,10 +15,10 @@ services:
       - ./deploy/data:/data
       - ./deploy/runtime:/runtime
 
-  socks5:
+  https-proxy:
     build:
       context: ./backend
-      target: socks5d
+      target: https-proxyd
     env_file:
       - ./.env
     restart: unless-stopped
@@ -26,7 +26,7 @@ services:
       SQLITE_PATH: /data/app.db
       NODE_CONFIG_PATH: /runtime/nodes.json
     ports:
-      - "${SOCKS5_PORT:-1080}:1080"
+      - "${HTTPS_PROXY_PORT:-443}:443"
     volumes:
       - ./deploy/data:/data
       - ./deploy/runtime:/runtime

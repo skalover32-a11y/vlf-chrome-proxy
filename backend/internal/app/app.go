@@ -97,7 +97,7 @@ func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path st
 	for idx := range cfg.Nodes {
 		cfg.Nodes[idx].ProxyScheme = strings.TrimSpace(cfg.Nodes[idx].ProxyScheme)
 		if cfg.Nodes[idx].ProxyScheme == "" {
-			cfg.Nodes[idx].ProxyScheme = "socks5"
+			cfg.Nodes[idx].ProxyScheme = "https"
 		}
 	}
 	return repo.UpsertNodes(ctx, cfg.Nodes)

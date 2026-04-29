@@ -1,11 +1,11 @@
 # VLF Chrome Proxy Backend MVP
 
-Production-like minimal backend for a Chrome extension that exchanges Telegram-issued access links into short-lived browser sessions and SOCKS5 proxy credentials.
+Production-like minimal backend for a Chrome extension that exchanges Telegram-issued access links into short-lived browser sessions and HTTPS proxy credentials.
 
-## What is included
+## What Is Included
 
 - Go backend access/session layer
-- Real SOCKS5 proxy service using a dedicated Go daemon
+- HTTPS proxy service with TLS and Basic proxy authentication
 - Docker Compose deployment for Ubuntu
 - SQLite persistence for MVP
 - Admin CLI to create test access links
@@ -15,36 +15,43 @@ Production-like minimal backend for a Chrome extension that exchanges Telegram-i
 
 We use one repository and one deployment mode: Docker Compose.
 
-- `api` service exposes `/browser/*` endpoints for the Chrome extension
-- `socks5` service validates username/password auth against shared backend state
-- SQLite lives in `deploy/data/app.db`
-- Node metadata lives in `deploy/runtime/nodes.json`
+- `api` exposes `/browser/*` endpoints for the Chrome extension.
+- `https-proxy` accepts Chrome HTTPS proxy traffic over TLS.
+- Proxy auth is validated against backend-issued temporary credentials in SQLite.
+- SQLite lives in `deploy/data/app.db`.
+- Node metadata lives in `deploy/runtime/nodes.json`.
+- TLS material lives in `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`.
 
-### Why this SOCKS5 server
+### Why This HTTPS Proxy Layer
 
-This MVP ships with a dedicated Go SOCKS5 daemon built from the same codebase and backed by [`github.com/things-go/go-socks5`](https://pkg.go.dev/github.com/things-go/go-socks5). I picked this path because it gives us:
+The previous SOCKS5 path is no longer the happy path because Chrome's browser proxy auth behavior is more reliable with HTTP/HTTPS proxy challenges. The MVP now ships a small Go HTTPS proxy daemon in `backend/cmd/https-proxyd`.
 
-- stable SOCKS5 protocol handling
-- built-in username/password auth support
-- direct runtime validation against our session and credential store
-- a single deploy contour without external proxy-specific config drift
+It was chosen because it gives us:
 
-For the first version this is a better fit than bolting dynamic credentials onto an external daemon with file reload tricks.
+- Chrome-compatible `scheme: "https"` fixed proxy config
+- TLS between Chrome and the proxy service
+- HTTP `CONNECT` tunneling for browser HTTPS traffic
+- Basic proxy auth mapped directly to backend-issued temporary credentials
+- no external user file reload or sidecar credential sync
 
-## Repository layout
+The proxy layer is intentionally small: it authenticates, validates destination policy, opens tunnels, and forwards plain HTTP proxy requests.
+
+## Repository Layout
 
 ```text
 backend/
   cmd/
     api/
     admin/
-    socks5d/
+    https-proxyd/
   internal/
   migrations/
   Dockerfile
   go.mod
 deploy/
   ubuntu/install.sh
+  data/
+  runtime/
 configs/
   templates/nodes.json
 docs/
@@ -55,7 +62,9 @@ docker-compose.yml
 README.md
 ```
 
-## Data model
+## Data Model
+
+The access/session model is unchanged by the HTTPS migration.
 
 ### `access_links`
 
@@ -93,7 +102,9 @@ README.md
 - `status`, `latency_ms`
 - `is_default`
 
-## Required API endpoints
+For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `443`.
+
+## Required API Endpoints
 
 ### `POST /browser/exchange-link`
 
@@ -122,18 +133,27 @@ Behavior:
 
 ### `GET /browser/proxy-config?node_id=node-1&mode=fixed_servers`
 
-- validates the browser session
-- validates the requested node
-- lazily creates node-specific proxy credentials if needed
-- returns SOCKS5 config for the extension
+Returns HTTPS proxy config:
 
-## Optional endpoints in this MVP
+```json
+{
+  "mode": "fixed_servers",
+  "host": "proxy.example.com",
+  "port": 443,
+  "scheme": "https",
+  "username": "browser_u_xxx",
+  "password": "browser_p_xxx",
+  "bypass_list": ["<local>", "127.0.0.1"]
+}
+```
+
+## Optional Endpoints In This MVP
 
 - `POST /browser/logout`: implemented and revokes the session plus proxy credentials
-- `GET /browser/ip`: stub, returns `501`
+- `GET /browser/ip`: stub, returns `501`; the extension treats this as optional
 - `GET /browser/pac-config`: stub, returns `501`
 
-## Access-link flow
+## Data Flow
 
 ```text
 access link URL
@@ -142,10 +162,29 @@ access link URL
   -> session_token returned
   -> GET /browser/session
   -> GET /browser/proxy-config?node_id=...
-  -> SOCKS5 username/password auth against socks5d
+  -> Chrome applies HTTPS fixed proxy
+  -> proxy auth challenge
+  -> extension supplies temporary username/password
+  -> browser traffic tunnels through https-proxyd
 ```
 
-## Sensitive fields
+## TLS Certificates
+
+Chrome connects to the proxy service as an HTTPS proxy, so the proxy endpoint needs a certificate trusted by the client OS/browser.
+
+Runtime paths:
+
+- `deploy/runtime/tls/proxy.crt`
+- `deploy/runtime/tls/proxy.key`
+
+Environment paths inside containers:
+
+- `HTTPS_PROXY_TLS_CERT_PATH=/runtime/tls/proxy.crt`
+- `HTTPS_PROXY_TLS_KEY_PATH=/runtime/tls/proxy.key`
+
+The installer creates a 30-day self-signed certificate only as a bootstrap fallback. For real Chrome testing, replace it with a trusted certificate for `PROXY_PUBLIC_HOST`.
+
+## Sensitive Fields
 
 Treat these as secrets:
 
@@ -154,12 +193,13 @@ Treat these as secrets:
 - `session_token`
 - proxy `username`
 - proxy `password`
+- TLS private key
 - `TOKEN_PEPPER`
 - `PROXY_PASSWORD_PEPPER`
 
 The backend never logs raw access links or raw session tokens.
 
-## First local run
+## First Local Run
 
 1. Copy the environment template:
    `cp .env.example .env`
@@ -169,21 +209,22 @@ The backend never logs raw access links or raw session tokens.
    - `ACCESS_LINK_BASE_URL`
    - `PROXY_PUBLIC_HOST`
 3. Create runtime directories:
-   `mkdir -p deploy/data deploy/runtime`
-4. Copy the node template:
+   `mkdir -p deploy/data deploy/runtime/tls`
+4. Place trusted TLS cert/key into `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`, or let the installer create a self-signed smoke-test cert.
+5. Copy the node template:
    `cp configs/templates/nodes.json deploy/runtime/nodes.json`
-5. Start the stack:
+6. Start the stack:
    `docker compose up -d --build`
-6. Create a test access link:
+7. Create a test access link:
    `docker compose --profile tools run --rm admin create-access-link --label local-test --default-node node-1 --expires-in 24h`
-7. Use the returned `access_link_url` in the Chrome extension.
+8. Use the returned `access_link_url` in the Chrome extension.
 
-## One-command Ubuntu deployment
+## One-Command Ubuntu Deployment
 
 On a clean Ubuntu host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh | bash
 ```
 
 What the installer does:
@@ -191,29 +232,56 @@ What the installer does:
 - installs Docker Engine and Docker Compose plugin if missing
 - clones or updates the repository to `/opt/vlf-chrome-proxy`
 - creates `.env` from `.env.example` if needed
+- migrates old SOCKS5 env/node defaults to HTTPS proxy defaults
 - creates runtime directories
 - generates `deploy/runtime/nodes.json` from env if missing
-- builds and starts `api` and `socks5`
+- creates a self-signed TLS bootstrap cert if no cert/key exists
+- builds and starts `api` and `https-proxy`
+- removes old compose orphan containers
 - optionally creates a bootstrap access link
 - prints compose status
 
-## Environment values you must provide
+## Environment Values You Must Provide
 
 - `ACCESS_LINK_BASE_URL`: public base URL used to form links like `/access/<token>`
-- `PROXY_PUBLIC_HOST`: public host that Chrome should use for SOCKS5
+- `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
+- `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `443`
 - `BACKEND_PORT`: public backend port, default `18080`
-- `PROXY_PUBLIC_PORT`: public SOCKS5 port, default `1080`
+- `HTTPS_PROXY_PORT`: host port mapped to the HTTPS proxy container, default `443`
+- `HTTPS_PROXY_TLS_CERT_PATH`: container path to proxy certificate
+- `HTTPS_PROXY_TLS_KEY_PATH`: container path to proxy private key
 - `TOKEN_PEPPER`: HMAC secret for access/session token hashing
 - `PROXY_PASSWORD_PEPPER`: HMAC secret for derived proxy passwords
 
-## What you still need to connect on your side
+## What You Still Need To Connect
 
 - your real public backend domain
 - your real proxy DNS/host
+- trusted TLS certificate and key for the proxy host
 - the exact access-link format used by your Telegram bot
 - the actual issuance path so the bot writes valid `access_links` rows instead of relying on the admin CLI
 
-## HTTP status model
+## Manual Smoke Checks
+
+Check backend:
+
+```bash
+curl -fsS http://127.0.0.1:18080/healthz
+```
+
+Check HTTPS proxy TLS:
+
+```bash
+openssl s_client -connect proxy.example.com:443 -servername proxy.example.com </dev/null
+```
+
+Check proxy auth with issued credentials:
+
+```bash
+curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:443 https://api.ipify.org
+```
+
+## HTTP Status Model
 
 - `200`: success
 - `400`: malformed request or unsupported mode
@@ -223,8 +291,9 @@ What the installer does:
 - `409`: node is offline
 - `501`: optional endpoint not implemented yet
 
-## Notes before production
+## Notes Before Production
 
-- SOCKS5 does not encrypt the browser-to-proxy hop. This is the main MVP security tradeoff.
+- Use a trusted TLS certificate for the proxy host before real Chrome testing.
 - SQLite is acceptable for one-server MVP, but later multi-node deployments should move session state to Postgres or Redis-backed coordination.
 - Restrict allowed Chrome extension IDs before a public rollout.
+- Add rate limiting for `/browser/exchange-link` before public traffic.

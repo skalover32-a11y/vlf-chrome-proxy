@@ -71,8 +71,8 @@ func TestBrowserFlowHappyPath(t *testing.T) {
 	if err := json.Unmarshal(proxyRes.Body.Bytes(), &proxyPayload); err != nil {
 		t.Fatalf("unmarshal proxy response: %v", err)
 	}
-	if proxyPayload.Scheme != "socks5" {
-		t.Fatalf("expected socks5 scheme, got %s", proxyPayload.Scheme)
+	if proxyPayload.Scheme != "https" {
+		t.Fatalf("expected https scheme, got %s", proxyPayload.Scheme)
 	}
 	if proxyPayload.Username == "" || proxyPayload.Password == "" {
 		t.Fatal("expected proxy credentials in proxy response")
@@ -133,8 +133,8 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		Country:     "FI",
 		City:        "Helsinki",
 		Host:        "proxy.example.com",
-		ProxyPort:   1080,
-		ProxyScheme: "socks5",
+		ProxyPort:   443,
+		ProxyScheme: "https",
 		Status:      "online",
 		IsDefault:   true,
 	}}); err != nil {

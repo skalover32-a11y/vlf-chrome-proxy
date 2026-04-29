@@ -53,6 +53,17 @@ load_env_file() {
   done < "$ENV_FILE"
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
 install_docker() {
   if need_cmd docker && docker compose version >/dev/null 2>&1; then
     log "docker and docker compose already installed"
@@ -74,6 +85,16 @@ install_docker() {
   systemctl start docker
 }
 
+ensure_openssl() {
+  if need_cmd openssl; then
+    return
+  fi
+
+  log "installing openssl for TLS certificate bootstrap"
+  apt-get update -y
+  apt-get install -y openssl
+}
+
 sync_repo() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     log "updating existing repository in $INSTALL_DIR"
@@ -88,7 +109,7 @@ sync_repo() {
 
 prepare_runtime() {
   log "preparing runtime directories"
-  mkdir -p "$INSTALL_DIR/deploy/data" "$INSTALL_DIR/deploy/runtime"
+  mkdir -p "$INSTALL_DIR/deploy/data" "$INSTALL_DIR/deploy/runtime" "$INSTALL_DIR/deploy/runtime/tls"
 
   if [ ! -f "$ENV_FILE" ]; then
     log "creating $ENV_FILE from template"
@@ -96,6 +117,7 @@ prepare_runtime() {
     log "edit $ENV_FILE and rerun if you need production values"
   fi
 
+  migrate_env_file
   load_env_file
 
   if [ ! -f "$INSTALL_DIR/deploy/runtime/nodes.json" ]; then
@@ -109,8 +131,30 @@ prepare_runtime() {
       "country": "${NODE_DEFAULT_COUNTRY:-FI}",
       "city": "${NODE_DEFAULT_CITY:-Helsinki}",
       "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
-      "proxy_port": ${PROXY_PUBLIC_PORT:-1080},
-      "proxy_scheme": "socks5",
+      "proxy_port": ${PROXY_PUBLIC_PORT:-443},
+      "proxy_scheme": "https",
+      "supports_pac": false,
+      "status": "online",
+      "latency_ms": 0,
+      "is_default": true
+    }
+  ]
+}
+EOF
+  elif grep -q '"proxy_scheme": "socks5"' "$INSTALL_DIR/deploy/runtime/nodes.json"; then
+    log "migrating existing nodes.json from SOCKS5 to HTTPS proxy"
+    cp "$INSTALL_DIR/deploy/runtime/nodes.json" "$INSTALL_DIR/deploy/runtime/nodes.json.bak.$(date -u +%Y%m%d%H%M%S)"
+    cat >"$INSTALL_DIR/deploy/runtime/nodes.json" <<EOF
+{
+  "nodes": [
+    {
+      "id": "${NODE_DEFAULT_ID:-node-1}",
+      "name": "${NODE_DEFAULT_NAME:-Finland #1}",
+      "country": "${NODE_DEFAULT_COUNTRY:-FI}",
+      "city": "${NODE_DEFAULT_CITY:-Helsinki}",
+      "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
+      "proxy_port": ${PROXY_PUBLIC_PORT:-443},
+      "proxy_scheme": "https",
       "supports_pac": false,
       "status": "online",
       "latency_ms": 0,
@@ -120,6 +164,45 @@ prepare_runtime() {
 }
 EOF
   fi
+
+  ensure_tls_material
+}
+
+migrate_env_file() {
+  if grep -q '^SOCKS5_' "$ENV_FILE"; then
+    log "migrating .env from SOCKS5 defaults to HTTPS proxy defaults"
+  fi
+
+  set_env_value "HTTPS_PROXY_LISTEN_ADDR" "${HTTPS_PROXY_LISTEN_ADDR:-:443}"
+  set_env_value "HTTPS_PROXY_TLS_CERT_PATH" "${HTTPS_PROXY_TLS_CERT_PATH:-/runtime/tls/proxy.crt}"
+  set_env_value "HTTPS_PROXY_TLS_KEY_PATH" "${HTTPS_PROXY_TLS_KEY_PATH:-/runtime/tls/proxy.key}"
+  set_env_value "HTTPS_PROXY_PORT" "${HTTPS_PROXY_PORT:-443}"
+
+  local current_public_port
+  current_public_port="$(grep '^PROXY_PUBLIC_PORT=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  if [ -z "$current_public_port" ] || [ "$current_public_port" = "1080" ]; then
+    set_env_value "PROXY_PUBLIC_PORT" "443"
+  fi
+}
+
+ensure_tls_material() {
+  local cert_path="$INSTALL_DIR/deploy/runtime/tls/proxy.crt"
+  local key_path="$INSTALL_DIR/deploy/runtime/tls/proxy.key"
+
+  if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+    return
+  fi
+
+  ensure_openssl
+  log "generating self-signed HTTPS proxy certificate for bootstrap"
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$key_path" \
+    -out "$cert_path" \
+    -days 30 \
+    -subj "/CN=${PROXY_PUBLIC_HOST:-proxy.example.com}" \
+    -addext "subjectAltName=DNS:${PROXY_PUBLIC_HOST:-proxy.example.com}" >/dev/null 2>&1
+  chmod 600 "$key_path"
+  log "replace deploy/runtime/tls/proxy.crt and proxy.key with trusted production certs before real Chrome testing"
 }
 
 check_port_available() {
@@ -137,13 +220,14 @@ check_port_available() {
 preflight_ports() {
   load_env_file
   check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
-  check_port_available "${SOCKS5_PORT:-1080}" "SOCKS5_PORT"
+  check_port_available "${HTTPS_PROXY_PORT:-443}" "HTTPS_PROXY_PORT"
 }
 
 start_stack() {
   log "building and starting docker compose stack"
+  docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy down --remove-orphans || true
   preflight_ports
-  docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build
+  docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans
 }
 
 bootstrap_access_link() {

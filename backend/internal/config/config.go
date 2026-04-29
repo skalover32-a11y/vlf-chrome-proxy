@@ -14,7 +14,9 @@ type Config struct {
 	AppEnv                          string
 	LogLevel                        string
 	HTTPListenAddr                  string
-	Socks5ListenAddr                string
+	HTTPSProxyListenAddr            string
+	HTTPSProxyTLSCertPath           string
+	HTTPSProxyTLSKeyPath            string
 	SQLitePath                      string
 	NodeConfigPath                  string
 	TokenPepper                     string
@@ -33,13 +35,15 @@ func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		AppEnv:           env("APP_ENV", "production"),
-		LogLevel:         env("LOG_LEVEL", "info"),
-		HTTPListenAddr:   env("HTTP_LISTEN_ADDR", ":8080"),
-		Socks5ListenAddr: env("SOCKS5_LISTEN_ADDR", ":1080"),
-		SQLitePath:       env("SQLITE_PATH", "/data/app.db"),
-		NodeConfigPath:   env("NODE_CONFIG_PATH", "/runtime/nodes.json"),
-		TokenPepper:      strings.TrimSpace(os.Getenv("TOKEN_PEPPER")),
+		AppEnv:                env("APP_ENV", "production"),
+		LogLevel:              env("LOG_LEVEL", "info"),
+		HTTPListenAddr:        env("HTTP_LISTEN_ADDR", ":8080"),
+		HTTPSProxyListenAddr:  env("HTTPS_PROXY_LISTEN_ADDR", ":443"),
+		HTTPSProxyTLSCertPath: env("HTTPS_PROXY_TLS_CERT_PATH", "/runtime/tls/proxy.crt"),
+		HTTPSProxyTLSKeyPath:  env("HTTPS_PROXY_TLS_KEY_PATH", "/runtime/tls/proxy.key"),
+		SQLitePath:            env("SQLITE_PATH", "/data/app.db"),
+		NodeConfigPath:        env("NODE_CONFIG_PATH", "/runtime/nodes.json"),
+		TokenPepper:           strings.TrimSpace(os.Getenv("TOKEN_PEPPER")),
 		ProxyPasswordPepper: strings.TrimSpace(
 			os.Getenv("PROXY_PASSWORD_PEPPER"),
 		),
