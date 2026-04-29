@@ -141,8 +141,8 @@ prepare_runtime() {
   ]
 }
 EOF
-  elif grep -q '"proxy_scheme": "socks5"' "$INSTALL_DIR/deploy/runtime/nodes.json"; then
-    log "migrating existing nodes.json from SOCKS5 to HTTPS proxy"
+  elif grep -q '"proxy_scheme": "socks5"' "$INSTALL_DIR/deploy/runtime/nodes.json" || grep -q '"proxy_port": 443' "$INSTALL_DIR/deploy/runtime/nodes.json"; then
+    log "migrating existing nodes.json to HTTPS proxy port ${PROXY_PUBLIC_PORT:-1443}"
     cp "$INSTALL_DIR/deploy/runtime/nodes.json" "$INSTALL_DIR/deploy/runtime/nodes.json.bak.$(date -u +%Y%m%d%H%M%S)"
     cat >"$INSTALL_DIR/deploy/runtime/nodes.json" <<EOF
 {
