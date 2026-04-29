@@ -136,7 +136,7 @@ check_port_available() {
 
 preflight_ports() {
   load_env_file
-  check_port_available "${BACKEND_PORT:-8080}" "BACKEND_PORT"
+  check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
   check_port_available "${SOCKS5_PORT:-1080}" "SOCKS5_PORT"
 }
 

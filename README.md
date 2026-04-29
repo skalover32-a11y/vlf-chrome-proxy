@@ -201,6 +201,7 @@ What the installer does:
 
 - `ACCESS_LINK_BASE_URL`: public base URL used to form links like `/access/<token>`
 - `PROXY_PUBLIC_HOST`: public host that Chrome should use for SOCKS5
+- `BACKEND_PORT`: public backend port, default `18080`
 - `PROXY_PUBLIC_PORT`: public SOCKS5 port, default `1080`
 - `TOKEN_PEPPER`: HMAC secret for access/session token hashing
 - `PROXY_PASSWORD_PEPPER`: HMAC secret for derived proxy passwords

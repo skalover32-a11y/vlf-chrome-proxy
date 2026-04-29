@@ -10,7 +10,7 @@ services:
       SQLITE_PATH: /data/app.db
       NODE_CONFIG_PATH: /runtime/nodes.json
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_PORT:-18080}:8080"
     volumes:
       - ./deploy/data:/data
       - ./deploy/runtime:/runtime
