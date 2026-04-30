@@ -8,7 +8,7 @@
       "host": "proxy.example.com",
       "proxy_port": 1443,
       "proxy_scheme": "https",
-      "supports_pac": false,
+      "supports_pac": true,
       "status": "online",
       "latency_ms": 0,
       "is_default": true

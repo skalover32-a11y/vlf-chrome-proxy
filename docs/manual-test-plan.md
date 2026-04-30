@@ -11,6 +11,7 @@
 7. Call `GET /browser/session` with `Authorization: Bearer <session_token>`.
 8. Call `GET /browser/proxy-config?node_id=node-1&mode=fixed_servers` with the same bearer token.
 9. Verify the returned `scheme=https`, `port=1443`, `username`, and `password`.
+10. Call `GET /browser/pac-config?node_id=node-1&bypass=example.com` and verify `mode=pac_script`, `pac_script`, `username`, and `password`.
 
 ## Local Fallback Happy Path
 
@@ -36,7 +37,10 @@
 4. Confirm Chrome requests optional proxy auth permissions if needed.
 5. Confirm popup status becomes `Connected`.
 6. Open a website in Chrome and confirm traffic works through the proxy.
-7. Click `Disconnect` and confirm browser traffic returns to direct mode.
+7. Switch server in the popup; if connected, confirm it reconnects with the selected node.
+8. Switch routing mode from `Full Proxy` to `Smart Routing`; confirm PAC mode applies without losing the session.
+9. Add a custom bypass rule and confirm it persists after reopening popup/options.
+10. Click `Disconnect` and confirm browser traffic returns to direct mode.
 
 ## Error Handling
 
@@ -49,10 +53,11 @@
 7. Use an expired `session_token` and confirm HTTP `401`.
 8. Request `/browser/proxy-config` with an unknown `node_id` and confirm HTTP `404`.
 9. Mark the node offline in `deploy/runtime/nodes.json`, restart the stack, and confirm `/browser/proxy-config` returns HTTP `409`.
+10. Disable or expire the Remnawave subscription, call `/browser/session`, and confirm the session is rejected and local proxy credentials stop working after reconnect/revalidation.
 
 ## Logout And Optional Endpoints
 
 1. Call `POST /browser/logout` with a valid `session_token` and confirm HTTP `200`.
 2. Reuse the same `session_token` and confirm `/browser/session` now returns HTTP `401`.
 3. Call `GET /browser/ip` and confirm HTTP `501`; this endpoint is optional in the MVP.
-4. Call `GET /browser/pac-config` and confirm HTTP `501`.
+4. Call `GET /browser/pac-config` without a valid bearer token and confirm HTTP `401`.

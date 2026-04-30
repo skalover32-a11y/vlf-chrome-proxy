@@ -38,7 +38,7 @@ func (s *Server) Handler() http.Handler {
 		r.With(s.requireBearerToken).Get("/proxy-config", s.handleProxyConfig)
 		r.With(s.requireBearerToken).Post("/logout", s.handleLogout)
 		r.With(s.requireBearerToken).Get("/ip", s.handleIPStub)
-		r.With(s.requireBearerToken).Get("/pac-config", s.handlePACStub)
+		r.With(s.requireBearerToken).Get("/pac-config", s.handlePACConfig)
 	})
 
 	return router
@@ -113,12 +113,18 @@ func (s *Server) handleIPStub(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handlePACStub(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, &service.AppError{
-		Code:    "not_implemented",
-		Message: "/browser/pac-config is not implemented in this MVP.",
-		Status:  http.StatusNotImplemented,
-	})
+func (s *Server) handlePACConfig(w http.ResponseWriter, r *http.Request) {
+	response, err := s.service.GetPacConfig(
+		r.Context(),
+		bearerTokenFromContext(r.Context()),
+		strings.TrimSpace(r.URL.Query().Get("node_id")),
+		queryCSV(r.URL.Query().Get("bypass")),
+	)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) requireBearerToken(next http.Handler) http.Handler {
@@ -206,6 +212,21 @@ func clientIP(r *http.Request) string {
 		return strings.TrimSpace(r.RemoteAddr)
 	}
 	return host
+}
+
+func queryCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			items = append(items, part)
+		}
+	}
+	return items
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {

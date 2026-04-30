@@ -142,7 +142,7 @@ prepare_runtime() {
       "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
       "proxy_port": ${PROXY_PUBLIC_PORT:-1443},
       "proxy_scheme": "https",
-      "supports_pac": false,
+      "supports_pac": true,
       "status": "online",
       "latency_ms": 0,
       "is_default": true
@@ -150,7 +150,7 @@ prepare_runtime() {
   ]
 }
 EOF
-  elif grep -q '"proxy_scheme": "socks5"' "$INSTALL_DIR/deploy/runtime/nodes.json" || grep -q '"proxy_port": 443' "$INSTALL_DIR/deploy/runtime/nodes.json"; then
+  elif grep -q '"proxy_scheme": "socks5"' "$INSTALL_DIR/deploy/runtime/nodes.json" || grep -q '"proxy_port": 443' "$INSTALL_DIR/deploy/runtime/nodes.json" || grep -q '"supports_pac": false' "$INSTALL_DIR/deploy/runtime/nodes.json"; then
     log "migrating existing nodes.json to HTTPS proxy port ${PROXY_PUBLIC_PORT:-1443}"
     cp "$INSTALL_DIR/deploy/runtime/nodes.json" "$INSTALL_DIR/deploy/runtime/nodes.json.bak.$(date -u +%Y%m%d%H%M%S)"
     cat >"$INSTALL_DIR/deploy/runtime/nodes.json" <<EOF
@@ -164,7 +164,7 @@ EOF
       "host": "${PROXY_PUBLIC_HOST:-proxy.example.com}",
       "proxy_port": ${PROXY_PUBLIC_PORT:-1443},
       "proxy_scheme": "https",
-      "supports_pac": false,
+      "supports_pac": true,
       "status": "online",
       "latency_ms": 0,
       "is_default": true
@@ -204,6 +204,7 @@ migrate_env_file() {
   ensure_env_value "REMNA_API_TOKEN" ""
   ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
   ensure_env_value "REMNA_ALLOW_INSECURE_TLS" "false"
+  ensure_env_value "SMART_ROUTING_PROXY_DOMAINS" "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com"
 }
 
 ensure_tls_material() {

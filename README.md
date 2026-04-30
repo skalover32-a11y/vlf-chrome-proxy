@@ -10,7 +10,8 @@ Production-like minimal backend for a Chrome extension that validates Remnawave 
 - SQLite persistence for MVP
 - Remnawave subscription validation for production access
 - Admin CLI to create local test access links
-- Multi-node-ready data model with one-node default deployment
+- Multi-node data model with node selection by `node_id`
+- Fixed proxy and PAC-based Smart Routing
 
 ## Architecture
 
@@ -19,6 +20,7 @@ We use one repository and one deployment mode: Docker Compose.
 - `api` exposes `/browser/*` endpoints for the Chrome extension.
 - `https-proxy` accepts Chrome HTTPS proxy traffic over TLS.
 - `/browser/exchange-link` validates Remnawave subscription links in production mode, with local access links kept as a test fallback.
+- `/browser/session` and `/browser/proxy-config` re-check the access source; Remnawave failures are fail-closed and revoke the local session.
 - Proxy auth is validated against backend-issued temporary credentials in SQLite.
 - SQLite lives in `deploy/data/app.db`.
 - Node metadata lives in `deploy/runtime/nodes.json`.
@@ -134,6 +136,16 @@ The access/session model keeps local access links for tests, but browser session
 
 For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `1443`.
 
+## Multi-Node And Routing
+
+Nodes are configured in `deploy/runtime/nodes.json`. `/browser/exchange-link` and `/browser/session` return the full available `nodes[]` array and `default_node_id`. The extension stores `selected_node_id`; `/browser/proxy-config` and `/browser/pac-config` take `node_id` so switching servers does not change the session model.
+
+Routing modes:
+
+- `fixed_servers`: Full Proxy; all browser traffic goes through the selected HTTPS proxy node.
+- `pac_script`: Smart Routing; backend returns a PAC script that proxies only `SMART_ROUTING_PROXY_DOMAINS` and sends the rest direct.
+- Custom bypass rules are passed from the extension to `/browser/pac-config` and are emitted as `DIRECT` PAC rules.
+
 ## Required API Endpoints
 
 ### `POST /browser/exchange-link`
@@ -160,6 +172,7 @@ Behavior:
 - checks TTL and revoke state
 - checks the local access link or Remnawave subscription is still active
 - returns current node list
+- returns `subscription` status metadata
 
 ### `GET /browser/proxy-config?node_id=node-1&mode=fixed_servers`
 
@@ -177,11 +190,15 @@ Returns HTTPS proxy config:
 }
 ```
 
+### `GET /browser/pac-config?node_id=node-1&bypass=example.com`
+
+Returns a Smart Routing PAC config plus proxy auth credentials for the selected node. The proxy credentials stay temporary and session-bound, same as Full Proxy.
+
 ## Optional Endpoints In This MVP
 
 - `POST /browser/logout`: implemented and revokes the session plus proxy credentials
 - `GET /browser/ip`: stub, returns `501`; the extension treats this as optional
-- `GET /browser/pac-config`: stub, returns `501`
+- `GET /browser/pac-config`: implemented for Smart Routing
 
 ## Data Flow
 
@@ -192,8 +209,8 @@ access link URL
   -> browser session created with source_type/source_ref
   -> session_token returned
   -> GET /browser/session
-  -> GET /browser/proxy-config?node_id=...
-  -> Chrome applies HTTPS fixed proxy
+  -> GET /browser/proxy-config?node_id=... or GET /browser/pac-config?node_id=...
+  -> Chrome applies HTTPS fixed proxy or PAC Smart Routing
   -> proxy auth challenge
   -> extension supplies temporary username/password
   -> browser traffic tunnels through https-proxyd
@@ -284,6 +301,7 @@ What the installer does:
 - `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
 - `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
+- `SMART_ROUTING_PROXY_DOMAINS`: comma-separated domains routed through proxy in PAC mode
 - `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
 - `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `1443`
 - `BACKEND_PORT`: public backend port, default `18080`

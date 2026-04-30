@@ -168,6 +168,7 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		"https://access.example.com",
 		"local_only",
 		nil,
+		[]string{"2ip.ru"},
 		false,
 	)
 

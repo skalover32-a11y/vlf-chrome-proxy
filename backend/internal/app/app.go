@@ -64,6 +64,7 @@ func New(ctx context.Context) (*Runtime, error) {
 		cfg.AccessLinkBaseURL,
 		cfg.AccessSourceMode,
 		remnaClient,
+		cfg.SmartRoutingProxyDomains,
 		cfg.ProxyAllowPrivateDestinations,
 	)
 

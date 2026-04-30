@@ -35,6 +35,7 @@ type Config struct {
 	RemnaAPIToken                   string
 	RemnaTimeout                    time.Duration
 	RemnaAllowInsecureTLS           bool
+	SmartRoutingProxyDomains        []string
 	ProxyAllowPrivateDestinations   bool
 	ProxyEnableIPv6                 bool
 }
@@ -67,6 +68,7 @@ func Load() (Config, error) {
 		RemnaAPIToken:                   strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
 		RemnaTimeout:                    secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
 		RemnaAllowInsecureTLS:           boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
+		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com")),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
 		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),
 	}

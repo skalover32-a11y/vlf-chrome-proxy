@@ -52,6 +52,7 @@ type ExchangeLinkResponse struct {
 	Nodes         []AccessNode `json:"nodes"`
 	DefaultNodeID string       `json:"default_node_id"`
 	DefaultMode   string       `json:"default_mode"`
+	Subscription  AccessStatus `json:"subscription"`
 }
 
 type SessionResponse struct {
@@ -59,6 +60,8 @@ type SessionResponse struct {
 	ExpiresAt     string       `json:"expires_at"`
 	Nodes         []AccessNode `json:"nodes"`
 	DefaultNodeID string       `json:"default_node_id"`
+	DefaultMode   string       `json:"default_mode"`
+	Subscription  AccessStatus `json:"subscription"`
 }
 
 type ProxyConfigResponse struct {
@@ -71,6 +74,24 @@ type ProxyConfigResponse struct {
 	BypassList []string `json:"bypass_list"`
 }
 
+type PacConfigResponse struct {
+	Mode       string   `json:"mode"`
+	PacScript  string   `json:"pac_script"`
+	Version    int      `json:"version"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	Scheme     string   `json:"scheme"`
+	Username   string   `json:"username"`
+	Password   string   `json:"password"`
+	BypassList []string `json:"bypass_list"`
+}
+
+type AccessStatus struct {
+	Source    string `json:"source"`
+	Status    string `json:"status"`
+	CheckedAt string `json:"checked_at"`
+}
+
 type Service struct {
 	repo                *repository.Repository
 	logger              *slog.Logger
@@ -81,6 +102,7 @@ type Service struct {
 	accessLinkBaseURL   string
 	accessSourceMode    string
 	remnaClient         *remna.Client
+	smartRoutingDomains []string
 	proxyAllowPrivateIP bool
 }
 
@@ -94,6 +116,7 @@ func New(
 	accessLinkBaseURL string,
 	accessSourceMode string,
 	remnaClient *remna.Client,
+	smartRoutingDomains []string,
 	proxyAllowPrivateIP bool,
 ) *Service {
 	return &Service{
@@ -106,6 +129,7 @@ func New(
 		accessLinkBaseURL:   accessLinkBaseURL,
 		accessSourceMode:    accessSourceMode,
 		remnaClient:         remnaClient,
+		smartRoutingDomains: append([]string(nil), smartRoutingDomains...),
 		proxyAllowPrivateIP: proxyAllowPrivateIP,
 	}
 }
@@ -190,6 +214,7 @@ func (s *Service) exchangeLocalAccessLink(ctx context.Context, request ExchangeL
 		Nodes:         mapNodes(nodes),
 		DefaultNodeID: defaultNodeID,
 		DefaultMode:   "fixed_servers",
+		Subscription:  s.accessStatus("local_access_link"),
 	}, nil
 }
 
@@ -230,6 +255,7 @@ func (s *Service) exchangeRemnaSubscription(ctx context.Context, request Exchang
 		ExternalSubscriptionID: subscription.ShortUUID,
 		SelectedNodeID:         defaultNodeID,
 		DefaultNodeID:          defaultNodeID,
+		ExpiresAt:              subscriptionExpiry(subscription),
 		ClientIP:               request.ClientIP,
 		UserAgent:              request.UserAgent,
 	})
@@ -249,6 +275,7 @@ func (s *Service) exchangeRemnaSubscription(ctx context.Context, request Exchang
 		Nodes:         mapNodes(nodes),
 		DefaultNodeID: defaultNodeID,
 		DefaultMode:   "fixed_servers",
+		Subscription:  s.accessStatus("remna_subscription"),
 	}, nil
 }
 
@@ -272,6 +299,8 @@ func (s *Service) ValidateSession(ctx context.Context, rawSessionToken string) (
 		ExpiresAt:     bundle.Session.ExpiresAt.UTC().Format(time.RFC3339),
 		Nodes:         mapNodes(nodes),
 		DefaultNodeID: defaultNodeID,
+		DefaultMode:   "fixed_servers",
+		Subscription:  s.accessStatus(bundle.Session.SourceType),
 	}, bundle, nil
 }
 
@@ -346,6 +375,67 @@ func (s *Service) GetProxyConfig(
 		Username:   credential.Username,
 		Password:   password,
 		BypassList: append([]string(nil), s.defaultBypassList...),
+	}, nil
+}
+
+func (s *Service) GetPacConfig(
+	ctx context.Context,
+	rawSessionToken string,
+	nodeID string,
+	customBypassList []string,
+) (*PacConfigResponse, error) {
+	_, bundle, err := s.ValidateSession(ctx, rawSessionToken)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes, defaultNodeID, err := s.resolveNodesForSession(ctx, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	if nodeID == "" {
+		nodeID = bundle.Session.SelectedNodeID
+	}
+	if nodeID == "" {
+		nodeID = defaultNodeID
+	}
+
+	node, err := pickNode(nodes, nodeID)
+	if err != nil {
+		return nil, &AppError{
+			Code:    "node_not_found",
+			Message: "Proxy node is not available.",
+			Status:  404,
+		}
+	}
+	if node.Status != "online" {
+		return nil, &AppError{
+			Code:    "node_offline",
+			Message: "Proxy node is offline.",
+			Status:  409,
+		}
+	}
+
+	credential, err := s.ensureProxyCredential(ctx, &bundle.Session, node.ID)
+	if err != nil {
+		return nil, fmt.Errorf("ensure proxy credential: %w", err)
+	}
+
+	password := s.tokenManager.DeriveProxyPassword(bundle.Session.ID, node.ID, credential.PasswordVersion)
+	bypassList := append([]string(nil), s.defaultBypassList...)
+	bypassList = append(bypassList, customBypassList...)
+
+	return &PacConfigResponse{
+		Mode:       "pac_script",
+		PacScript:  buildPacScript(node, s.smartRoutingDomains, bypassList),
+		Version:    1,
+		Host:       node.Host,
+		Port:       node.ProxyPort,
+		Scheme:     node.ProxyScheme,
+		Username:   credential.Username,
+		Password:   password,
+		BypassList: bypassList,
 	}, nil
 }
 
@@ -495,6 +585,9 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 	switch bundle.Session.SourceType {
 	case "remna_subscription":
 		if err := s.validateRemnaSessionSource(ctx, &bundle.Session); err != nil {
+			if revokeErr := s.repo.RevokeSession(ctx, bundle.Session.ID, time.Now().UTC()); revokeErr != nil {
+				s.logger.Warn("revoke invalid remna session failed", slog.String("session_id", bundle.Session.ID), slog.Any("error", revokeErr))
+			}
 			return nil, err
 		}
 	default:
@@ -523,6 +616,9 @@ func (s *Service) createBrowserSession(
 	}
 
 	expiresAt := time.Now().UTC().Add(s.sessionTTL)
+	if !params.ExpiresAt.IsZero() && params.ExpiresAt.Before(expiresAt) {
+		expiresAt = params.ExpiresAt.UTC()
+	}
 	availableNodeIDs := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		availableNodeIDs = append(availableNodeIDs, node.ID)
@@ -541,6 +637,13 @@ func (s *Service) createBrowserSession(
 	}
 
 	return sessionToken, session, expiresAt, nil
+}
+
+func subscriptionExpiry(subscription *remna.Subscription) time.Time {
+	if subscription == nil || subscription.ExpiresAt == nil {
+		return time.Time{}
+	}
+	return subscription.ExpiresAt.UTC()
 }
 
 func (s *Service) resolveNodesForAccessLink(ctx context.Context, link *repository.AccessLink) ([]repository.Node, string, error) {
@@ -648,6 +751,75 @@ func validateRemnaSubscription(subscription *remna.Subscription) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) accessStatus(source string) AccessStatus {
+	if source == "" {
+		source = "local_access_link"
+	}
+	return AccessStatus{
+		Source:    source,
+		Status:    "active",
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func buildPacScript(node repository.Node, proxyDomains []string, bypassList []string) string {
+	proxy := strings.ToUpper(node.ProxyScheme) + " " + node.Host + ":" + fmt.Sprint(node.ProxyPort)
+	if node.ProxyScheme == "https" {
+		proxy = "HTTPS " + node.Host + ":" + fmt.Sprint(node.ProxyPort)
+	}
+
+	return fmt.Sprintf(`function FindProxyForURL(url, host) {
+  var proxy = %q;
+  var proxyDomains = %s;
+  var bypassDomains = %s;
+
+  if (isPlainHostName(host) || isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0") || isInNet(dnsResolve(host), "172.16.0.0", "255.240.0.0") || isInNet(dnsResolve(host), "192.168.0.0", "255.255.0.0") || isInNet(dnsResolve(host), "127.0.0.0", "255.0.0.0")) {
+    return "DIRECT";
+  }
+
+  for (var i = 0; i < bypassDomains.length; i++) {
+    if (dnsDomainIs(host, bypassDomains[i]) || shExpMatch(host, bypassDomains[i])) {
+      return "DIRECT";
+    }
+  }
+
+  for (var j = 0; j < proxyDomains.length; j++) {
+    if (dnsDomainIs(host, proxyDomains[j]) || shExpMatch(host, proxyDomains[j])) {
+      return proxy;
+    }
+  }
+
+  return "DIRECT";
+}`, proxy, jsonStringArray(proxyDomains), jsonStringArray(cleanPACDomains(bypassList)))
+}
+
+func cleanPACDomains(values []string) []string {
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<local>" || strings.HasPrefix(value, "127.") {
+			continue
+		}
+		items = append(items, value)
+	}
+	return items
+}
+
+func jsonStringArray(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+		if !strings.HasPrefix(value, "*.") && !strings.HasPrefix(value, ".") {
+			quoted = append(quoted, fmt.Sprintf("%q", "."+value))
+		}
+	}
+	return "[" + strings.Join(quoted, ",") + "]"
 }
 
 func mapRemnaError(err error) error {
