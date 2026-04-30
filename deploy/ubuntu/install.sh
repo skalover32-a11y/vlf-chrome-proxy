@@ -204,7 +204,11 @@ migrate_env_file() {
   ensure_env_value "REMNA_API_TOKEN" ""
   ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
   ensure_env_value "REMNA_ALLOW_INSECURE_TLS" "false"
-  ensure_env_value "SMART_ROUTING_PROXY_DOMAINS" "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com"
+  local current_smart_domains
+  current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
+    set_env_value "SMART_ROUTING_PROXY_DOMAINS" ""
+  fi
 }
 
 ensure_tls_material() {

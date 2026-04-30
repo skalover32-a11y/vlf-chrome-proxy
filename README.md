@@ -144,7 +144,7 @@ Routing modes:
 
 - `fixed_servers`: Full Proxy; all browser traffic goes through the selected HTTPS proxy node.
 - `pac_script`: Smart Routing; backend returns a PAC script that proxies only include-list domains and sends the rest direct.
-- Proxy include rules come from `SMART_ROUTING_PROXY_DOMAINS` plus optional `/browser/pac-config?proxy=...` values from the extension.
+- Proxy include rules come from optional `SMART_ROUTING_PROXY_DOMAINS` plus `/browser/pac-config?proxy=...` values from the extension. Keep `SMART_ROUTING_PROXY_DOMAINS` empty if users should fully control the list from the extension UI.
 - Custom bypass rules are passed from the extension as `/browser/pac-config?bypass=...` and are emitted as `DIRECT` PAC rules. Bypass rules win over proxy include rules.
 
 ## Required API Endpoints
@@ -302,7 +302,7 @@ What the installer does:
 - `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
 - `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
-- `SMART_ROUTING_PROXY_DOMAINS`: comma-separated domains routed through proxy in PAC mode
+- `SMART_ROUTING_PROXY_DOMAINS`: optional comma-separated server-side domains always routed through proxy in PAC mode. Default is empty; do not put IP-check domains like `2ip.ru` here unless you intentionally want them proxied.
 - `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
 - `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `1443`
 - `BACKEND_PORT`: public backend port, default `18080`
