@@ -319,10 +319,6 @@ func (s *Service) ValidateProxyCredentials(ctx context.Context, username, passwo
 		return false, nil
 	}
 
-	if err := s.repo.TouchProxyCredentialUsed(ctx, bundle.Credential.ID, now); err != nil {
-		s.logger.Warn("touch proxy credential failed", slog.String("credential_id", bundle.Credential.ID), slog.Any("error", err))
-	}
-
 	return true, nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"io"
 	"log"
@@ -33,6 +34,7 @@ func main() {
 		Handler:           proxy,
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		TLSNextProto:      map[string]func(*http.Server, *tls.Conn, http.Handler){},
 	}
 
 	go func() {
@@ -94,12 +96,14 @@ func (p *httpsProxy) authenticate(r *http.Request) (bool, string, string) {
 func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, username string) {
 	target := r.Host
 	if !p.allowTarget(target) {
+		p.runtime.Logger.Warn("proxy target denied", "username", redact.String(username), "target", target, "remote_addr", r.RemoteAddr)
 		http.Error(w, "proxy target denied", http.StatusForbidden)
 		return
 	}
 
 	upstream, err := net.DialTimeout("tcp", target, 20*time.Second)
 	if err != nil {
+		p.runtime.Logger.Warn("proxy connect target failed", "username", redact.String(username), "target", target, "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "connect target failed", http.StatusBadGateway)
 		return
 	}
@@ -107,6 +111,7 @@ func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, usern
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		_ = upstream.Close()
+		p.runtime.Logger.Warn("proxy connect hijack unsupported", "username", redact.String(username), "target", target, "proto", r.Proto, "remote_addr", r.RemoteAddr)
 		http.Error(w, "hijacking is not supported", http.StatusInternalServerError)
 		return
 	}
@@ -114,21 +119,24 @@ func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, usern
 	client, _, err := hijacker.Hijack()
 	if err != nil {
 		_ = upstream.Close()
+		p.runtime.Logger.Warn("proxy connect hijack failed", "username", redact.String(username), "target", target, "remote_addr", r.RemoteAddr, "error", err)
 		return
 	}
 
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	p.runtime.Logger.Info("proxy tunnel opened", "username", username, "target", target)
+	p.runtime.Logger.Info("proxy tunnel opened", "username", redact.String(username), "target", target)
 	pipe(client, upstream)
 }
 
 func (p *httpsProxy) handleForward(w http.ResponseWriter, r *http.Request, username string) {
 	if r.URL == nil || r.URL.Scheme == "" || r.URL.Host == "" {
+		p.runtime.Logger.Warn("proxy forward rejected invalid url", "username", redact.String(username), "method", r.Method, "remote_addr", r.RemoteAddr)
 		http.Error(w, "absolute proxy request url is required", http.StatusBadRequest)
 		return
 	}
 
 	if !p.allowTarget(r.URL.Host) {
+		p.runtime.Logger.Warn("proxy forward target denied", "username", redact.String(username), "target", r.URL.Host, "remote_addr", r.RemoteAddr)
 		http.Error(w, "proxy target denied", http.StatusForbidden)
 		return
 	}
@@ -149,6 +157,7 @@ func (p *httpsProxy) handleForward(w http.ResponseWriter, r *http.Request, usern
 
 	response, err := transport.RoundTrip(outbound)
 	if err != nil {
+		p.runtime.Logger.Warn("proxy forward request failed", "username", redact.String(username), "target", r.URL.Host, "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "forward request failed", http.StatusBadGateway)
 		return
 	}
@@ -157,7 +166,7 @@ func (p *httpsProxy) handleForward(w http.ResponseWriter, r *http.Request, usern
 	copyHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
-	p.runtime.Logger.Info("proxy request forwarded", "username", username, "target", r.URL.Host)
+	p.runtime.Logger.Info("proxy request forwarded", "username", redact.String(username), "target", r.URL.Host)
 }
 
 func (p *httpsProxy) allowTarget(target string) bool {
