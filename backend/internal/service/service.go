@@ -777,37 +777,69 @@ func buildPacScript(node repository.Node, proxyDomains []string, bypassList []st
   var proxy = %q;
   var proxyDomains = %s;
   var bypassDomains = %s;
+  var resolved = dnsResolve(host);
 
-  if (isPlainHostName(host) || isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0") || isInNet(dnsResolve(host), "172.16.0.0", "255.240.0.0") || isInNet(dnsResolve(host), "192.168.0.0", "255.255.0.0") || isInNet(dnsResolve(host), "127.0.0.0", "255.0.0.0")) {
+  if (isPlainHostName(host) || (resolved && (isInNet(resolved, "10.0.0.0", "255.0.0.0") || isInNet(resolved, "172.16.0.0", "255.240.0.0") || isInNet(resolved, "192.168.0.0", "255.255.0.0") || isInNet(resolved, "127.0.0.0", "255.0.0.0")))) {
     return "DIRECT";
   }
 
   for (var i = 0; i < bypassDomains.length; i++) {
-    if (dnsDomainIs(host, bypassDomains[i]) || shExpMatch(host, bypassDomains[i])) {
+    if (matchesRule(host, bypassDomains[i])) {
       return "DIRECT";
     }
   }
 
   for (var j = 0; j < proxyDomains.length; j++) {
-    if (dnsDomainIs(host, proxyDomains[j]) || shExpMatch(host, proxyDomains[j])) {
+    if (matchesRule(host, proxyDomains[j])) {
       return proxy;
     }
   }
 
   return "DIRECT";
-}`, proxy, jsonStringArray(proxyDomains), jsonStringArray(cleanPACDomains(bypassList)))
+}
+
+function matchesRule(host, rule) {
+  rule = String(rule || "").toLowerCase();
+  host = String(host || "").toLowerCase();
+
+  if (!rule) {
+    return false;
+  }
+
+  if (rule.indexOf("*") !== -1) {
+    return shExpMatch(host, rule);
+  }
+
+  return host === rule || dnsDomainIs(host, "." + rule);
+}`, proxy, jsonStringArray(cleanPACDomains(proxyDomains)), jsonStringArray(cleanPACDomains(bypassList)))
 }
 
 func cleanPACDomains(values []string) []string {
 	items := make([]string, 0, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
+		value = normalizePACDomain(value)
 		if value == "" || value == "<local>" || strings.HasPrefix(value, "127.") {
 			continue
 		}
 		items = append(items, value)
 	}
 	return items
+}
+
+func normalizePACDomain(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "www.")
+	if slash := strings.Index(value, "/"); slash >= 0 {
+		value = value[:slash]
+	}
+	if colon := strings.LastIndex(value, ":"); colon > -1 && !strings.Contains(value[colon+1:], "]") {
+		value = value[:colon]
+	}
+	value = strings.TrimPrefix(value, "*.")
+	value = strings.TrimPrefix(value, ".")
+	return strings.TrimSpace(value)
 }
 
 func jsonStringArray(values []string) string {
@@ -818,9 +850,6 @@ func jsonStringArray(values []string) string {
 			continue
 		}
 		quoted = append(quoted, fmt.Sprintf("%q", value))
-		if !strings.HasPrefix(value, "*.") && !strings.HasPrefix(value, ".") {
-			quoted = append(quoted, fmt.Sprintf("%q", "."+value))
-		}
 	}
 	return "[" + strings.Join(quoted, ",") + "]"
 }
