@@ -382,6 +382,7 @@ func (s *Service) GetPacConfig(
 	ctx context.Context,
 	rawSessionToken string,
 	nodeID string,
+	customProxyList []string,
 	customBypassList []string,
 ) (*PacConfigResponse, error) {
 	_, bundle, err := s.ValidateSession(ctx, rawSessionToken)
@@ -425,10 +426,12 @@ func (s *Service) GetPacConfig(
 	password := s.tokenManager.DeriveProxyPassword(bundle.Session.ID, node.ID, credential.PasswordVersion)
 	bypassList := append([]string(nil), s.defaultBypassList...)
 	bypassList = append(bypassList, customBypassList...)
+	proxyDomains := append([]string(nil), s.smartRoutingDomains...)
+	proxyDomains = append(proxyDomains, customProxyList...)
 
 	return &PacConfigResponse{
 		Mode:       "pac_script",
-		PacScript:  buildPacScript(node, s.smartRoutingDomains, bypassList),
+		PacScript:  buildPacScript(node, proxyDomains, bypassList),
 		Version:    1,
 		Host:       node.Host,
 		Port:       node.ProxyPort,

@@ -143,8 +143,9 @@ Nodes are configured in `deploy/runtime/nodes.json`. `/browser/exchange-link` an
 Routing modes:
 
 - `fixed_servers`: Full Proxy; all browser traffic goes through the selected HTTPS proxy node.
-- `pac_script`: Smart Routing; backend returns a PAC script that proxies only `SMART_ROUTING_PROXY_DOMAINS` and sends the rest direct.
-- Custom bypass rules are passed from the extension to `/browser/pac-config` and are emitted as `DIRECT` PAC rules.
+- `pac_script`: Smart Routing; backend returns a PAC script that proxies only include-list domains and sends the rest direct.
+- Proxy include rules come from `SMART_ROUTING_PROXY_DOMAINS` plus optional `/browser/pac-config?proxy=...` values from the extension.
+- Custom bypass rules are passed from the extension as `/browser/pac-config?bypass=...` and are emitted as `DIRECT` PAC rules. Bypass rules win over proxy include rules.
 
 ## Required API Endpoints
 
@@ -190,9 +191,9 @@ Returns HTTPS proxy config:
 }
 ```
 
-### `GET /browser/pac-config?node_id=node-1&bypass=example.com`
+### `GET /browser/pac-config?node_id=node-1&proxy=youtube.com&bypass=example.com`
 
-Returns a Smart Routing PAC config plus proxy auth credentials for the selected node. The proxy credentials stay temporary and session-bound, same as Full Proxy.
+Returns a Smart Routing PAC config plus proxy auth credentials for the selected node. `proxy` is a comma-separated include-list of domains that should go through the proxy; all other traffic is direct. `bypass` is a comma-separated exception list that is forced direct even if it also matches the proxy include-list. The proxy credentials stay temporary and session-bound, same as Full Proxy.
 
 ## Optional Endpoints In This MVP
 

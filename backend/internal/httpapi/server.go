@@ -118,6 +118,7 @@ func (s *Server) handlePACConfig(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		bearerTokenFromContext(r.Context()),
 		strings.TrimSpace(r.URL.Query().Get("node_id")),
+		queryCSV(r.URL.Query().Get("proxy")),
 		queryCSV(r.URL.Query().Get("bypass")),
 	)
 	if err != nil {
