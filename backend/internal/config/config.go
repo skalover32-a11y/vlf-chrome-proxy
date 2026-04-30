@@ -29,6 +29,7 @@ type Config struct {
 	AllowedChromeExtensionIDs       []string
 	AccessLinkBaseURL               string
 	ProxyAllowPrivateDestinations   bool
+	ProxyEnableIPv6                 bool
 }
 
 func Load() (Config, error) {
@@ -55,6 +56,7 @@ func Load() (Config, error) {
 		AllowedChromeExtensionIDs:       csv(os.Getenv("ALLOWED_CHROME_EXTENSION_IDS")),
 		AccessLinkBaseURL:               strings.TrimRight(env("ACCESS_LINK_BASE_URL", "https://example.com"), "/"),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
+		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),
 	}
 
 	if cfg.TokenPepper == "" {

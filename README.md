@@ -250,6 +250,7 @@ What the installer does:
 - `HTTPS_PROXY_PORT`: host port mapped to the HTTPS proxy container, default `1443`
 - `HTTPS_PROXY_TLS_CERT_PATH`: container path to proxy certificate
 - `HTTPS_PROXY_TLS_KEY_PATH`: container path to proxy private key
+- `PROXY_ENABLE_IPV6`: enable outbound IPv6 dialing from the proxy, default `false`
 - `TOKEN_PEPPER`: HMAC secret for access/session token hashing
 - `PROXY_PASSWORD_PEPPER`: HMAC secret for derived proxy passwords
 

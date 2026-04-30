@@ -5,8 +5,11 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os/signal"
@@ -35,6 +38,7 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       90 * time.Second,
 		TLSNextProto:      map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		ErrorLog:          log.New(tlsErrorWriter{logger: runtime.Logger}, "", 0),
 	}
 
 	go func() {
@@ -50,6 +54,20 @@ func main() {
 
 type httpsProxy struct {
 	runtime *app.Runtime
+}
+
+type tlsErrorWriter struct {
+	logger *slog.Logger
+}
+
+func (w tlsErrorWriter) Write(p []byte) (int, error) {
+	message := strings.TrimSpace(string(p))
+	if strings.Contains(message, "TLS handshake error") && strings.HasSuffix(message, ": EOF") {
+		return len(p), nil
+	}
+
+	w.logger.Warn("https proxy server error", "message", message)
+	return len(p), nil
 }
 
 func (p *httpsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -101,8 +119,13 @@ func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, usern
 		return
 	}
 
-	upstream, err := net.DialTimeout("tcp", target, 20*time.Second)
+	upstream, err := p.dialContext(r.Context(), "tcp", target)
 	if err != nil {
+		if errors.Is(err, errNoIPv4Address) {
+			p.runtime.Logger.Info("proxy connect skipped ipv6-only target", "username", redact.String(username), "target", target, "remote_addr", r.RemoteAddr)
+			http.Error(w, "target has no ipv4 address", http.StatusBadGateway)
+			return
+		}
 		p.runtime.Logger.Warn("proxy connect target failed", "username", redact.String(username), "target", target, "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "connect target failed", http.StatusBadGateway)
 		return
@@ -150,13 +173,18 @@ func (p *httpsProxy) handleForward(w http.ResponseWriter, r *http.Request, usern
 	transport := &http.Transport{
 		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
-		DialContext:         (&net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:         p.dialContext,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
 	defer transport.CloseIdleConnections()
 
 	response, err := transport.RoundTrip(outbound)
 	if err != nil {
+		if errors.Is(err, errNoIPv4Address) {
+			p.runtime.Logger.Info("proxy forward skipped ipv6-only target", "username", redact.String(username), "target", r.URL.Host, "remote_addr", r.RemoteAddr)
+			http.Error(w, "target has no ipv4 address", http.StatusBadGateway)
+			return
+		}
 		p.runtime.Logger.Warn("proxy forward request failed", "username", redact.String(username), "target", r.URL.Host, "remote_addr", r.RemoteAddr, "error", err)
 		http.Error(w, "forward request failed", http.StatusBadGateway)
 		return
@@ -167,6 +195,66 @@ func (p *httpsProxy) handleForward(w http.ResponseWriter, r *http.Request, usern
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
 	p.runtime.Logger.Info("proxy request forwarded", "username", redact.String(username), "target", r.URL.Host)
+}
+
+var errNoIPv4Address = errors.New("target has no ipv4 address")
+
+func (p *httpsProxy) dialContext(ctx context.Context, network string, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+
+	dialer := &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if ip.To4() != nil {
+			return dialer.DialContext(ctx, "tcp4", net.JoinHostPort(ip.String(), port))
+		}
+		if !p.runtime.Config.ProxyEnableIPv6 {
+			return nil, errNoIPv4Address
+		}
+		return dialer.DialContext(ctx, "tcp6", net.JoinHostPort(ip.String(), port))
+	}
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var firstErr error
+	for _, addr := range addrs {
+		ipv4 := addr.IP.To4()
+		if ipv4 == nil {
+			continue
+		}
+		conn, err := dialer.DialContext(ctx, "tcp4", net.JoinHostPort(ipv4.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if p.runtime.Config.ProxyEnableIPv6 {
+		for _, addr := range addrs {
+			if addr.IP.To4() != nil {
+				continue
+			}
+			conn, err := dialer.DialContext(ctx, "tcp6", net.JoinHostPort(addr.IP.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, fmt.Errorf("%w: %s", errNoIPv4Address, host)
 }
 
 func (p *httpsProxy) allowTarget(target string) bool {
