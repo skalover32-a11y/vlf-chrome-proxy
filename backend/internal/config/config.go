@@ -1,7 +1,9 @@
 package config
 
 import (
+	"crypto/tls"
 	"errors"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +30,11 @@ type Config struct {
 	CORSAllowChromeExtensionOrigins bool
 	AllowedChromeExtensionIDs       []string
 	AccessLinkBaseURL               string
+	AccessSourceMode                string
+	RemnaAPIBaseURL                 string
+	RemnaAPIToken                   string
+	RemnaTimeout                    time.Duration
+	RemnaAllowInsecureTLS           bool
 	ProxyAllowPrivateDestinations   bool
 	ProxyEnableIPv6                 bool
 }
@@ -55,6 +62,11 @@ func Load() (Config, error) {
 		CORSAllowChromeExtensionOrigins: boolEnv("CORS_ALLOW_CHROME_EXTENSION_ORIGINS", true),
 		AllowedChromeExtensionIDs:       csv(os.Getenv("ALLOWED_CHROME_EXTENSION_IDS")),
 		AccessLinkBaseURL:               strings.TrimRight(env("ACCESS_LINK_BASE_URL", "https://example.com"), "/"),
+		AccessSourceMode:                env("ACCESS_SOURCE_MODE", "local_only"),
+		RemnaAPIBaseURL:                 strings.TrimRight(env("REMNA_API_BASE_URL", ""), "/"),
+		RemnaAPIToken:                   strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
+		RemnaTimeout:                    secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
+		RemnaAllowInsecureTLS:           boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
 		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),
 	}
@@ -65,8 +77,25 @@ func Load() (Config, error) {
 	if cfg.ProxyPasswordPepper == "" {
 		return Config{}, errors.New("PROXY_PASSWORD_PEPPER is required")
 	}
+	if !validAccessSourceMode(cfg.AccessSourceMode) {
+		return Config{}, errors.New("ACCESS_SOURCE_MODE must be remna_only, remna_or_local, or local_only")
+	}
+	if modeUsesRemna(cfg.AccessSourceMode) && cfg.RemnaAPIBaseURL == "" {
+		return Config{}, errors.New("REMNA_API_BASE_URL is required when ACCESS_SOURCE_MODE uses remna")
+	}
 
 	return cfg, nil
+}
+
+func (c Config) RemnaHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if c.RemnaAllowInsecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Explicit dev-only switch.
+	}
+	return &http.Client{
+		Timeout:   c.RemnaTimeout,
+		Transport: transport,
+	}
 }
 
 func env(name, fallback string) string {
@@ -107,6 +136,32 @@ func durationEnv(name string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(hours) * time.Hour
+}
+
+func secondsDurationEnv(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	if strings.ContainsAny(value, "smhd") {
+		parsed, err := time.ParseDuration(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func validAccessSourceMode(mode string) bool {
+	return mode == "remna_only" || mode == "remna_or_local" || mode == "local_only"
+}
+
+func modeUsesRemna(mode string) bool {
+	return mode == "remna_only" || mode == "remna_or_local"
 }
 
 func csv(value string) []string {

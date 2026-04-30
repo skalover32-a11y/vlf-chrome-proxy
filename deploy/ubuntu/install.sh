@@ -64,6 +64,15 @@ set_env_value() {
   fi
 }
 
+ensure_env_value() {
+  local key="$1"
+  local value="$2"
+
+  if ! grep -q "^${key}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
 install_docker() {
   if need_cmd docker && docker compose version >/dev/null 2>&1; then
     log "docker and docker compose already installed"
@@ -189,6 +198,12 @@ migrate_env_file() {
   if [ -z "$current_public_port" ] || [ "$current_public_port" = "1080" ] || [ "$current_public_port" = "443" ]; then
     set_env_value "PROXY_PUBLIC_PORT" "1443"
   fi
+
+  ensure_env_value "ACCESS_SOURCE_MODE" "local_only"
+  ensure_env_value "REMNA_API_BASE_URL" ""
+  ensure_env_value "REMNA_API_TOKEN" ""
+  ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
+  ensure_env_value "REMNA_ALLOW_INSECURE_TLS" "false"
 }
 
 ensure_tls_material() {

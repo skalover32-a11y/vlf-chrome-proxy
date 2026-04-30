@@ -29,35 +29,38 @@ type Node struct {
 }
 
 type AccessLink struct {
-	ID             string
-	TokenHash      string
-	Label          string
-	Source         string
-	Status         string
-	AllowedNodeIDs []string
-	DefaultNodeID  string
-	ExpiresAt      time.Time
+	ID              string
+	TokenHash       string
+	Label           string
+	Source          string
+	Status          string
+	AllowedNodeIDs  []string
+	DefaultNodeID   string
+	ExpiresAt       time.Time
 	LastExchangedAt *time.Time
-	RevokedAt      *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	RevokedAt       *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type BrowserSession struct {
-	ID               string
-	AccessLinkID     string
-	SessionTokenHash string
-	SelectedNodeID   string
-	DefaultNodeID    string
-	AvailableNodeIDs []string
-	Status           string
-	ExpiresAt        time.Time
-	LastSeenAt       *time.Time
-	RevokedAt        *time.Time
-	ClientIP         string
-	UserAgent        string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                     string
+	AccessLinkID           string
+	SourceType             string
+	SourceRef              string
+	ExternalSubscriptionID string
+	SessionTokenHash       string
+	SelectedNodeID         string
+	DefaultNodeID          string
+	AvailableNodeIDs       []string
+	Status                 string
+	ExpiresAt              time.Time
+	LastSeenAt             *time.Time
+	RevokedAt              *time.Time
+	ClientIP               string
+	UserAgent              string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 type ProxyCredential struct {
@@ -75,13 +78,13 @@ type ProxyCredential struct {
 
 type SessionBundle struct {
 	Session    BrowserSession
-	AccessLink AccessLink
+	AccessLink *AccessLink
 }
 
 type CredentialBundle struct {
 	Credential ProxyCredential
 	Session    BrowserSession
-	AccessLink AccessLink
+	AccessLink *AccessLink
 	Node       Node
 }
 
@@ -95,14 +98,17 @@ type CreateAccessLinkParams struct {
 }
 
 type CreateSessionParams struct {
-	AccessLinkID     string
-	SessionTokenHash string
-	SelectedNodeID   string
-	DefaultNodeID    string
-	AvailableNodeIDs []string
-	ExpiresAt        time.Time
-	ClientIP         string
-	UserAgent        string
+	AccessLinkID           string
+	SourceType             string
+	SourceRef              string
+	ExternalSubscriptionID string
+	SessionTokenHash       string
+	SelectedNodeID         string
+	DefaultNodeID          string
+	AvailableNodeIDs       []string
+	ExpiresAt              time.Time
+	ClientIP               string
+	UserAgent              string
 }
 
 type Repository struct {
@@ -332,28 +338,35 @@ func (r *Repository) CreateSession(ctx context.Context, params CreateSessionPara
 	}
 
 	session := &BrowserSession{
-		ID:               uuid.NewString(),
-		AccessLinkID:     params.AccessLinkID,
-		SessionTokenHash: params.SessionTokenHash,
-		SelectedNodeID:   strings.TrimSpace(params.SelectedNodeID),
-		DefaultNodeID:    strings.TrimSpace(params.DefaultNodeID),
-		AvailableNodeIDs: append([]string(nil), params.AvailableNodeIDs...),
-		Status:           "active",
-		ExpiresAt:        params.ExpiresAt.UTC(),
-		ClientIP:         strings.TrimSpace(params.ClientIP),
-		UserAgent:        strings.TrimSpace(params.UserAgent),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:                     uuid.NewString(),
+		AccessLinkID:           params.AccessLinkID,
+		SourceType:             fallback(params.SourceType, "local_access_link"),
+		SourceRef:              strings.TrimSpace(params.SourceRef),
+		ExternalSubscriptionID: strings.TrimSpace(params.ExternalSubscriptionID),
+		SessionTokenHash:       params.SessionTokenHash,
+		SelectedNodeID:         strings.TrimSpace(params.SelectedNodeID),
+		DefaultNodeID:          strings.TrimSpace(params.DefaultNodeID),
+		AvailableNodeIDs:       append([]string(nil), params.AvailableNodeIDs...),
+		Status:                 "active",
+		ExpiresAt:              params.ExpiresAt.UTC(),
+		ClientIP:               strings.TrimSpace(params.ClientIP),
+		UserAgent:              strings.TrimSpace(params.UserAgent),
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 
 	_, err = r.db.ExecContext(
 		ctx,
 		`INSERT INTO browser_sessions (
-			id, access_link_id, session_token_hash, selected_node_id, default_node_id,
+			id, access_link_id, source_type, source_ref, external_subscription_id,
+			session_token_hash, selected_node_id, default_node_id,
 			available_node_ids, status, expires_at, client_ip, user_agent, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID,
-		session.AccessLinkID,
+		nullString(session.AccessLinkID),
+		session.SourceType,
+		nullString(session.SourceRef),
+		nullString(session.ExternalSubscriptionID),
 		session.SessionTokenHash,
 		nullString(session.SelectedNodeID),
 		nullString(session.DefaultNodeID),
@@ -375,18 +388,22 @@ func (r *Repository) CreateSession(ctx context.Context, params CreateSessionPara
 func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash string) (*SessionBundle, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
-			s.id, s.access_link_id, s.session_token_hash, s.selected_node_id, s.default_node_id,
+			s.id, s.access_link_id, s.source_type, s.source_ref, s.external_subscription_id,
+			s.session_token_hash, s.selected_node_id, s.default_node_id,
 			s.available_node_ids, s.status, s.expires_at, s.last_seen_at, s.revoked_at,
 			s.client_ip, s.user_agent, s.created_at, s.updated_at,
 			a.id, a.token_hash, a.label, a.source, a.status, a.allowed_node_ids, a.default_node_id,
 			a.expires_at, a.last_exchanged_at, a.revoked_at, a.created_at, a.updated_at
 		FROM browser_sessions s
-		JOIN access_links a ON a.id = s.access_link_id
+		LEFT JOIN access_links a ON a.id = s.access_link_id
 		WHERE s.session_token_hash = ?
 	`, tokenHash)
 
 	var (
 		session              BrowserSession
+		sessionAccessLinkID  sql.NullString
+		sessionSourceRef     sql.NullString
+		sessionExternalID    sql.NullString
 		sessionSelectedNode  sql.NullString
 		sessionDefaultNode   sql.NullString
 		sessionAvailableJSON string
@@ -398,18 +415,26 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 		sessionCreatedAt     string
 		sessionUpdatedAt     string
 		link                 AccessLink
-		linkAllowedJSON      string
+		linkID               sql.NullString
+		linkTokenHash        sql.NullString
+		linkLabel            sql.NullString
+		linkSource           sql.NullString
+		linkStatus           sql.NullString
+		linkAllowedJSON      sql.NullString
 		linkDefaultNode      sql.NullString
-		linkExpiresAt        string
+		linkExpiresAt        sql.NullString
 		linkLastEx           sql.NullString
 		linkRevoked          sql.NullString
-		linkCreatedAt        string
-		linkUpdatedAt        string
+		linkCreatedAt        sql.NullString
+		linkUpdatedAt        sql.NullString
 	)
 
 	if err := row.Scan(
 		&session.ID,
-		&session.AccessLinkID,
+		&sessionAccessLinkID,
+		&session.SourceType,
+		&sessionSourceRef,
+		&sessionExternalID,
 		&session.SessionTokenHash,
 		&sessionSelectedNode,
 		&sessionDefaultNode,
@@ -422,11 +447,11 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 		&sessionUserAgent,
 		&sessionCreatedAt,
 		&sessionUpdatedAt,
-		&link.ID,
-		&link.TokenHash,
-		&link.Label,
-		&link.Source,
-		&link.Status,
+		&linkID,
+		&linkTokenHash,
+		&linkLabel,
+		&linkSource,
+		&linkStatus,
 		&linkAllowedJSON,
 		&linkDefaultNode,
 		&linkExpiresAt,
@@ -445,11 +470,10 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 	if err != nil {
 		return nil, err
 	}
-	allowedNodeIDs, err := unmarshalStringSlice(linkAllowedJSON)
-	if err != nil {
-		return nil, err
-	}
 
+	session.AccessLinkID = sessionAccessLinkID.String
+	session.SourceRef = sessionSourceRef.String
+	session.ExternalSubscriptionID = sessionExternalID.String
 	session.SelectedNodeID = sessionSelectedNode.String
 	session.DefaultNodeID = sessionDefaultNode.String
 	session.AvailableNodeIDs = availableNodeIDs
@@ -461,15 +485,28 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 	session.CreatedAt = mustParseTime(sessionCreatedAt)
 	session.UpdatedAt = mustParseTime(sessionUpdatedAt)
 
-	link.DefaultNodeID = linkDefaultNode.String
-	link.AllowedNodeIDs = allowedNodeIDs
-	link.ExpiresAt = mustParseTime(linkExpiresAt)
-	link.LastExchangedAt = parseNullTime(linkLastEx)
-	link.RevokedAt = parseNullTime(linkRevoked)
-	link.CreatedAt = mustParseTime(linkCreatedAt)
-	link.UpdatedAt = mustParseTime(linkUpdatedAt)
+	var accessLink *AccessLink
+	if linkID.Valid {
+		allowedNodeIDs, err := unmarshalStringSlice(linkAllowedJSON.String)
+		if err != nil {
+			return nil, err
+		}
+		link.ID = linkID.String
+		link.TokenHash = linkTokenHash.String
+		link.Label = linkLabel.String
+		link.Source = linkSource.String
+		link.Status = linkStatus.String
+		link.DefaultNodeID = linkDefaultNode.String
+		link.AllowedNodeIDs = allowedNodeIDs
+		link.ExpiresAt = mustParseTime(linkExpiresAt.String)
+		link.LastExchangedAt = parseNullTime(linkLastEx)
+		link.RevokedAt = parseNullTime(linkRevoked)
+		link.CreatedAt = mustParseTime(linkCreatedAt.String)
+		link.UpdatedAt = mustParseTime(linkUpdatedAt.String)
+		accessLink = &link
+	}
 
-	return &SessionBundle{Session: session, AccessLink: link}, nil
+	return &SessionBundle{Session: session, AccessLink: accessLink}, nil
 }
 
 func (r *Repository) TouchSessionSeen(ctx context.Context, id string, when time.Time) error {
@@ -605,7 +642,8 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 		SELECT
 			pc.id, pc.session_id, pc.node_id, pc.username, pc.password_version, pc.expires_at,
 			pc.last_used_at, pc.revoked_at, pc.created_at, pc.updated_at,
-			s.id, s.access_link_id, s.session_token_hash, s.selected_node_id, s.default_node_id,
+			s.id, s.access_link_id, s.source_type, s.source_ref, s.external_subscription_id,
+			s.session_token_hash, s.selected_node_id, s.default_node_id,
 			s.available_node_ids, s.status, s.expires_at, s.last_seen_at, s.revoked_at, s.client_ip, s.user_agent,
 			s.created_at, s.updated_at,
 			a.id, a.token_hash, a.label, a.source, a.status, a.allowed_node_ids, a.default_node_id,
@@ -613,7 +651,7 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 			n.id, n.name, n.country, n.city, n.host, n.proxy_port, n.proxy_scheme, n.supports_pac, n.status, n.latency_ms, n.is_default
 		FROM proxy_credentials pc
 		JOIN browser_sessions s ON s.id = pc.session_id
-		JOIN access_links a ON a.id = s.access_link_id
+		LEFT JOIN access_links a ON a.id = s.access_link_id
 		JOIN nodes n ON n.id = pc.node_id
 		WHERE pc.username = ?
 	`, username)
@@ -625,6 +663,9 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 		credRevoked            sql.NullString
 		credCreatedAt          string
 		credUpdatedAt          string
+		sessionAccessLinkID    sql.NullString
+		sessionSourceRef       sql.NullString
+		sessionExternalID      sql.NullString
 		sessionSelectedNode    sql.NullString
 		sessionDefaultNode     sql.NullString
 		sessionAvailableJSON   string
@@ -635,13 +676,18 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 		sessionUserAgent       sql.NullString
 		sessionCreatedAt       string
 		sessionUpdatedAt       string
-		linkAllowedJSON        string
+		linkID                 sql.NullString
+		linkTokenHash          sql.NullString
+		linkLabel              sql.NullString
+		linkSource             sql.NullString
+		linkStatus             sql.NullString
+		linkAllowedJSON        sql.NullString
 		linkDefaultNode        sql.NullString
-		linkExpiresAt          string
+		linkExpiresAt          sql.NullString
 		linkLastEx             sql.NullString
 		linkRevoked            sql.NullString
-		linkCreatedAt          string
-		linkUpdatedAt          string
+		linkCreatedAt          sql.NullString
+		linkUpdatedAt          sql.NullString
 		nodeSupportsPAC, isDef int
 	)
 
@@ -657,7 +703,10 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 		&credCreatedAt,
 		&credUpdatedAt,
 		&bundle.Session.ID,
-		&bundle.Session.AccessLinkID,
+		&sessionAccessLinkID,
+		&bundle.Session.SourceType,
+		&sessionSourceRef,
+		&sessionExternalID,
 		&bundle.Session.SessionTokenHash,
 		&sessionSelectedNode,
 		&sessionDefaultNode,
@@ -670,11 +719,11 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 		&sessionUserAgent,
 		&sessionCreatedAt,
 		&sessionUpdatedAt,
-		&bundle.AccessLink.ID,
-		&bundle.AccessLink.TokenHash,
-		&bundle.AccessLink.Label,
-		&bundle.AccessLink.Source,
-		&bundle.AccessLink.Status,
+		&linkID,
+		&linkTokenHash,
+		&linkLabel,
+		&linkSource,
+		&linkStatus,
 		&linkAllowedJSON,
 		&linkDefaultNode,
 		&linkExpiresAt,
@@ -705,16 +754,15 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 	if err != nil {
 		return nil, err
 	}
-	allowedNodeIDs, err := unmarshalStringSlice(linkAllowedJSON)
-	if err != nil {
-		return nil, err
-	}
 
 	bundle.Credential.ExpiresAt = mustParseTime(credExpiresAt)
 	bundle.Credential.LastUsedAt = parseNullTime(credLastUsed)
 	bundle.Credential.RevokedAt = parseNullTime(credRevoked)
 	bundle.Credential.CreatedAt = mustParseTime(credCreatedAt)
 	bundle.Credential.UpdatedAt = mustParseTime(credUpdatedAt)
+	bundle.Session.AccessLinkID = sessionAccessLinkID.String
+	bundle.Session.SourceRef = sessionSourceRef.String
+	bundle.Session.ExternalSubscriptionID = sessionExternalID.String
 	bundle.Session.SelectedNodeID = sessionSelectedNode.String
 	bundle.Session.DefaultNodeID = sessionDefaultNode.String
 	bundle.Session.AvailableNodeIDs = availableNodeIDs
@@ -725,13 +773,27 @@ func (r *Repository) GetCredentialBundleByUsername(ctx context.Context, username
 	bundle.Session.UserAgent = sessionUserAgent.String
 	bundle.Session.CreatedAt = mustParseTime(sessionCreatedAt)
 	bundle.Session.UpdatedAt = mustParseTime(sessionUpdatedAt)
-	bundle.AccessLink.AllowedNodeIDs = allowedNodeIDs
-	bundle.AccessLink.DefaultNodeID = linkDefaultNode.String
-	bundle.AccessLink.ExpiresAt = mustParseTime(linkExpiresAt)
-	bundle.AccessLink.LastExchangedAt = parseNullTime(linkLastEx)
-	bundle.AccessLink.RevokedAt = parseNullTime(linkRevoked)
-	bundle.AccessLink.CreatedAt = mustParseTime(linkCreatedAt)
-	bundle.AccessLink.UpdatedAt = mustParseTime(linkUpdatedAt)
+	if linkID.Valid {
+		allowedNodeIDs, err := unmarshalStringSlice(linkAllowedJSON.String)
+		if err != nil {
+			return nil, err
+		}
+		accessLink := &AccessLink{
+			ID:              linkID.String,
+			TokenHash:       linkTokenHash.String,
+			Label:           linkLabel.String,
+			Source:          linkSource.String,
+			Status:          linkStatus.String,
+			AllowedNodeIDs:  allowedNodeIDs,
+			DefaultNodeID:   linkDefaultNode.String,
+			ExpiresAt:       mustParseTime(linkExpiresAt.String),
+			LastExchangedAt: parseNullTime(linkLastEx),
+			RevokedAt:       parseNullTime(linkRevoked),
+			CreatedAt:       mustParseTime(linkCreatedAt.String),
+			UpdatedAt:       mustParseTime(linkUpdatedAt.String),
+		}
+		bundle.AccessLink = accessLink
+	}
 	bundle.Node.SupportsPAC = nodeSupportsPAC == 1
 	bundle.Node.IsDefault = isDef == 1
 

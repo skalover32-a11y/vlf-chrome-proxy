@@ -166,6 +166,8 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		24*time.Hour,
 		[]string{"<local>", "127.0.0.1"},
 		"https://access.example.com",
+		"local_only",
+		nil,
 		false,
 	)
 

@@ -32,7 +32,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE TABLE IF NOT EXISTS browser_sessions (
     id TEXT PRIMARY KEY,
-    access_link_id TEXT NOT NULL,
+    access_link_id TEXT,
+    source_type TEXT NOT NULL DEFAULT 'local_access_link',
+    source_ref TEXT,
+    external_subscription_id TEXT,
     session_token_hash TEXT NOT NULL UNIQUE,
     selected_node_id TEXT,
     default_node_id TEXT,

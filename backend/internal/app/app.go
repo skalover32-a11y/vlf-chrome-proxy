@@ -11,6 +11,7 @@ import (
 
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/config"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/logging"
+	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/remna"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/repository"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/service"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/sqliteutil"
@@ -49,6 +50,10 @@ func New(ctx context.Context) (*Runtime, error) {
 	}
 
 	tokenManager := tokens.NewManager(cfg.TokenPepper, cfg.ProxyPasswordPepper)
+	var remnaClient *remna.Client
+	if cfg.AccessSourceMode == "remna_only" || cfg.AccessSourceMode == "remna_or_local" {
+		remnaClient = remna.NewClient(cfg.RemnaAPIBaseURL, cfg.RemnaAPIToken, cfg.RemnaHTTPClient())
+	}
 	svc := service.New(
 		repo,
 		logger,
@@ -57,6 +62,8 @@ func New(ctx context.Context) (*Runtime, error) {
 		cfg.ProxyCredentialTTL,
 		cfg.DefaultBypassList,
 		cfg.AccessLinkBaseURL,
+		cfg.AccessSourceMode,
+		remnaClient,
 		cfg.ProxyAllowPrivateDestinations,
 	)
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/redact"
+	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/remna"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/repository"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/tokens"
 )
@@ -78,6 +79,8 @@ type Service struct {
 	proxyCredentialTTL  time.Duration
 	defaultBypassList   []string
 	accessLinkBaseURL   string
+	accessSourceMode    string
+	remnaClient         *remna.Client
 	proxyAllowPrivateIP bool
 }
 
@@ -89,6 +92,8 @@ func New(
 	proxyCredentialTTL time.Duration,
 	defaultBypassList []string,
 	accessLinkBaseURL string,
+	accessSourceMode string,
+	remnaClient *remna.Client,
 	proxyAllowPrivateIP bool,
 ) *Service {
 	return &Service{
@@ -99,11 +104,32 @@ func New(
 		proxyCredentialTTL:  proxyCredentialTTL,
 		defaultBypassList:   append([]string(nil), defaultBypassList...),
 		accessLinkBaseURL:   accessLinkBaseURL,
+		accessSourceMode:    accessSourceMode,
+		remnaClient:         remnaClient,
 		proxyAllowPrivateIP: proxyAllowPrivateIP,
 	}
 }
 
 func (s *Service) ExchangeLink(ctx context.Context, request ExchangeLinkRequest) (*ExchangeLinkResponse, error) {
+	switch s.accessSourceMode {
+	case "remna_only":
+		return s.exchangeRemnaSubscription(ctx, request)
+	case "remna_or_local":
+		response, err := s.exchangeRemnaSubscription(ctx, request)
+		if err == nil {
+			return response, nil
+		}
+		var appErr *AppError
+		if !errors.As(err, &appErr) || (appErr.Code != "invalid_subscription_link" && appErr.Code != "remna_subscription_not_found") {
+			return nil, err
+		}
+		return s.exchangeLocalAccessLink(ctx, request)
+	default:
+		return s.exchangeLocalAccessLink(ctx, request)
+	}
+}
+
+func (s *Service) exchangeLocalAccessLink(ctx context.Context, request ExchangeLinkRequest) (*ExchangeLinkResponse, error) {
 	accessToken, err := extractAccessToken(request.URL)
 	if err != nil {
 		return nil, &AppError{
@@ -134,33 +160,17 @@ func (s *Service) ExchangeLink(ctx context.Context, request ExchangeLinkRequest)
 		return nil, err
 	}
 
-	sessionToken, sessionHash, err := s.tokenManager.NewSessionToken()
-	if err != nil {
-		return nil, fmt.Errorf("generate session token: %w", err)
-	}
-
-	expiresAt := time.Now().UTC().Add(s.sessionTTL)
-	availableNodeIDs := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		availableNodeIDs = append(availableNodeIDs, node.ID)
-	}
-
-	session, err := s.repo.CreateSession(ctx, repository.CreateSessionParams{
-		AccessLinkID:     link.ID,
-		SessionTokenHash: sessionHash,
-		SelectedNodeID:   defaultNodeID,
-		DefaultNodeID:    defaultNodeID,
-		AvailableNodeIDs: availableNodeIDs,
-		ExpiresAt:        expiresAt,
-		ClientIP:         request.ClientIP,
-		UserAgent:        request.UserAgent,
+	sessionToken, session, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
+		AccessLinkID:   link.ID,
+		SourceType:     "local_access_link",
+		SourceRef:      link.ID,
+		SelectedNodeID: defaultNodeID,
+		DefaultNodeID:  defaultNodeID,
+		ClientIP:       request.ClientIP,
+		UserAgent:      request.UserAgent,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
-	}
-
-	if _, err := s.ensureProxyCredential(ctx, session, defaultNodeID); err != nil {
-		return nil, fmt.Errorf("ensure proxy credential: %w", err)
 	}
 
 	if err := s.repo.TouchAccessLinkExchanged(ctx, link.ID, time.Now().UTC()); err != nil {
@@ -183,13 +193,72 @@ func (s *Service) ExchangeLink(ctx context.Context, request ExchangeLinkRequest)
 	}, nil
 }
 
+func (s *Service) exchangeRemnaSubscription(ctx context.Context, request ExchangeLinkRequest) (*ExchangeLinkResponse, error) {
+	if s.remnaClient == nil {
+		return nil, &AppError{
+			Code:    "remna_not_configured",
+			Message: "Subscription validation is not configured.",
+			Status:  503,
+		}
+	}
+
+	shortUUID, err := extractAccessToken(request.URL)
+	if err != nil {
+		return nil, &AppError{
+			Code:    "invalid_subscription_link",
+			Message: "Subscription link is invalid.",
+			Status:  400,
+		}
+	}
+
+	subscription, err := s.remnaClient.GetSubscriptionByShortUUID(ctx, shortUUID)
+	if err != nil {
+		return nil, mapRemnaError(err)
+	}
+	if err := validateRemnaSubscription(subscription); err != nil {
+		return nil, err
+	}
+
+	nodes, defaultNodeID, err := s.resolveAllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionToken, _, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
+		SourceType:             "remna_subscription",
+		SourceRef:              shortUUID,
+		ExternalSubscriptionID: subscription.ShortUUID,
+		SelectedNodeID:         defaultNodeID,
+		DefaultNodeID:          defaultNodeID,
+		ClientIP:               request.ClientIP,
+		UserAgent:              request.UserAgent,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info(
+		"browser session issued from remna",
+		slog.String("subscription", redact.String(shortUUID)),
+		slog.String("client_ip", request.ClientIP),
+	)
+
+	return &ExchangeLinkResponse{
+		SessionToken:  sessionToken,
+		ExpiresAt:     expiresAt.Format(time.RFC3339),
+		Nodes:         mapNodes(nodes),
+		DefaultNodeID: defaultNodeID,
+		DefaultMode:   "fixed_servers",
+	}, nil
+}
+
 func (s *Service) ValidateSession(ctx context.Context, rawSessionToken string) (*SessionResponse, *repository.SessionBundle, error) {
 	bundle, err := s.loadAndValidateSession(ctx, rawSessionToken)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	nodes, defaultNodeID, err := s.resolveNodesForAccessLink(ctx, &bundle.AccessLink)
+	nodes, defaultNodeID, err := s.resolveNodesForSession(ctx, bundle)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,7 +297,7 @@ func (s *Service) GetProxyConfig(
 		return nil, err
 	}
 
-	nodes, defaultNodeID, err := s.resolveNodesForAccessLink(ctx, &bundle.AccessLink)
+	nodes, defaultNodeID, err := s.resolveNodesForSession(ctx, bundle)
 	if err != nil {
 		return nil, err
 	}
@@ -304,13 +373,22 @@ func (s *Service) ValidateProxyCredentials(ctx context.Context, username, passwo
 	}
 
 	now := time.Now().UTC()
-	if bundle.Credential.RevokedAt != nil || bundle.Session.RevokedAt != nil || bundle.AccessLink.RevokedAt != nil {
+	if bundle.Credential.RevokedAt != nil || bundle.Session.RevokedAt != nil {
 		return false, nil
 	}
-	if bundle.Credential.ExpiresAt.Before(now) || bundle.Session.ExpiresAt.Before(now) || bundle.AccessLink.ExpiresAt.Before(now) {
+	if bundle.AccessLink != nil && bundle.AccessLink.RevokedAt != nil {
 		return false, nil
 	}
-	if bundle.Session.Status != "active" || bundle.AccessLink.Status != "active" || bundle.Node.Status != "online" {
+	if bundle.Credential.ExpiresAt.Before(now) || bundle.Session.ExpiresAt.Before(now) {
+		return false, nil
+	}
+	if bundle.AccessLink != nil && bundle.AccessLink.ExpiresAt.Before(now) {
+		return false, nil
+	}
+	if bundle.Session.Status != "active" || bundle.Node.Status != "online" {
+		return false, nil
+	}
+	if bundle.AccessLink != nil && bundle.AccessLink.Status != "active" {
 		return false, nil
 	}
 
@@ -414,13 +492,62 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 			Status:  401,
 		}
 	}
-	if err := validateAccessLink(&bundle.AccessLink); err != nil {
-		return nil, err
+	switch bundle.Session.SourceType {
+	case "remna_subscription":
+		if err := s.validateRemnaSessionSource(ctx, &bundle.Session); err != nil {
+			return nil, err
+		}
+	default:
+		if bundle.AccessLink == nil {
+			return nil, &AppError{
+				Code:    "access_source_missing",
+				Message: "Access source is missing.",
+				Status:  401,
+			}
+		}
+		if err := validateAccessLink(bundle.AccessLink); err != nil {
+			return nil, err
+		}
 	}
 	return bundle, nil
 }
 
+func (s *Service) createBrowserSession(
+	ctx context.Context,
+	nodes []repository.Node,
+	params repository.CreateSessionParams,
+) (string, *repository.BrowserSession, time.Time, error) {
+	sessionToken, sessionHash, err := s.tokenManager.NewSessionToken()
+	if err != nil {
+		return "", nil, time.Time{}, fmt.Errorf("generate session token: %w", err)
+	}
+
+	expiresAt := time.Now().UTC().Add(s.sessionTTL)
+	availableNodeIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		availableNodeIDs = append(availableNodeIDs, node.ID)
+	}
+	params.SessionTokenHash = sessionHash
+	params.AvailableNodeIDs = availableNodeIDs
+	params.ExpiresAt = expiresAt
+
+	session, err := s.repo.CreateSession(ctx, params)
+	if err != nil {
+		return "", nil, time.Time{}, fmt.Errorf("create session: %w", err)
+	}
+
+	if _, err := s.ensureProxyCredential(ctx, session, params.DefaultNodeID); err != nil {
+		return "", nil, time.Time{}, fmt.Errorf("ensure proxy credential: %w", err)
+	}
+
+	return sessionToken, session, expiresAt, nil
+}
+
 func (s *Service) resolveNodesForAccessLink(ctx context.Context, link *repository.AccessLink) ([]repository.Node, string, error) {
+	if link == nil {
+		return s.resolveAllNodes(ctx)
+	}
+
 	nodes, err := s.repo.ListNodes(ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("list nodes: %w", err)
@@ -459,6 +586,93 @@ func (s *Service) resolveNodesForAccessLink(ctx context.Context, link *repositor
 
 	defaultNodeID := chooseDefaultNode(link.DefaultNodeID, filtered)
 	return filtered, defaultNodeID, nil
+}
+
+func (s *Service) resolveNodesForSession(ctx context.Context, bundle *repository.SessionBundle) ([]repository.Node, string, error) {
+	if bundle.Session.SourceType == "remna_subscription" {
+		return s.resolveAllNodes(ctx)
+	}
+	return s.resolveNodesForAccessLink(ctx, bundle.AccessLink)
+}
+
+func (s *Service) resolveAllNodes(ctx context.Context) ([]repository.Node, string, error) {
+	nodes, err := s.repo.ListNodes(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("list nodes: %w", err)
+	}
+	if len(nodes) == 0 {
+		return nil, "", &AppError{
+			Code:    "no_nodes_available",
+			Message: "No proxy nodes are configured.",
+			Status:  503,
+		}
+	}
+	return nodes, chooseDefaultNode("", nodes), nil
+}
+
+func (s *Service) validateRemnaSessionSource(ctx context.Context, session *repository.BrowserSession) error {
+	if s.remnaClient == nil {
+		return &AppError{
+			Code:    "remna_not_configured",
+			Message: "Subscription validation is not configured.",
+			Status:  503,
+		}
+	}
+	subscription, err := s.remnaClient.GetSubscriptionByShortUUID(ctx, session.SourceRef)
+	if err != nil {
+		return mapRemnaError(err)
+	}
+	return validateRemnaSubscription(subscription)
+}
+
+func validateRemnaSubscription(subscription *remna.Subscription) error {
+	if subscription == nil {
+		return &AppError{
+			Code:    "remna_subscription_not_found",
+			Message: "Subscription was not found.",
+			Status:  403,
+		}
+	}
+	if !subscription.IsActive || strings.EqualFold(subscription.Status, "DISABLED") || strings.EqualFold(subscription.Status, "REVOKED") {
+		return &AppError{
+			Code:    "remna_subscription_disabled",
+			Message: "Subscription is disabled or revoked.",
+			Status:  403,
+		}
+	}
+	if subscription.ExpiresAt != nil && subscription.ExpiresAt.Before(time.Now().UTC()) {
+		return &AppError{
+			Code:    "remna_subscription_expired",
+			Message: "Subscription has expired.",
+			Status:  403,
+		}
+	}
+	return nil
+}
+
+func mapRemnaError(err error) error {
+	switch {
+	case errors.Is(err, remna.ErrNotFound):
+		return &AppError{
+			Code:    "remna_subscription_not_found",
+			Message: "Subscription was not found.",
+			Status:  403,
+		}
+	case errors.Is(err, remna.ErrUnauthorized):
+		return &AppError{
+			Code:    "remna_auth_failed",
+			Message: "Subscription validation service auth failed.",
+			Status:  502,
+		}
+	case errors.Is(err, remna.ErrUnavailable):
+		return &AppError{
+			Code:    "remna_unavailable",
+			Message: "Subscription validation service is unavailable.",
+			Status:  503,
+		}
+	default:
+		return fmt.Errorf("remna validation: %w", err)
+	}
 }
 
 func extractAccessToken(raw string) (string, error) {

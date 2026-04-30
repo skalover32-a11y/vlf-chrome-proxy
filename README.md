@@ -1,6 +1,6 @@
 # VLF Chrome Proxy Backend MVP
 
-Production-like minimal backend for a Chrome extension that exchanges Telegram-issued access links into short-lived browser sessions and HTTPS proxy credentials.
+Production-like minimal backend for a Chrome extension that validates Remnawave subscription links, creates short-lived browser sessions, and returns HTTPS proxy credentials.
 
 ## What Is Included
 
@@ -8,7 +8,8 @@ Production-like minimal backend for a Chrome extension that exchanges Telegram-i
 - HTTPS proxy service with TLS and Basic proxy authentication
 - Docker Compose deployment for Ubuntu
 - SQLite persistence for MVP
-- Admin CLI to create test access links
+- Remnawave subscription validation for production access
+- Admin CLI to create local test access links
 - Multi-node-ready data model with one-node default deployment
 
 ## Architecture
@@ -17,6 +18,7 @@ We use one repository and one deployment mode: Docker Compose.
 
 - `api` exposes `/browser/*` endpoints for the Chrome extension.
 - `https-proxy` accepts Chrome HTTPS proxy traffic over TLS.
+- `/browser/exchange-link` validates Remnawave subscription links in production mode, with local access links kept as a test fallback.
 - Proxy auth is validated against backend-issued temporary credentials in SQLite.
 - SQLite lives in `deploy/data/app.db`.
 - Node metadata lives in `deploy/runtime/nodes.json`.
@@ -62,9 +64,34 @@ docker-compose.yml
 README.md
 ```
 
+## Access Source Modes
+
+`ACCESS_SOURCE_MODE` controls how `/browser/exchange-link` validates the URL pasted by the user:
+
+- `remna_only`: only Remnawave subscription links are accepted.
+- `remna_or_local`: try Remnawave first, then local `access_links` only for fallback/testing.
+- `local_only`: only admin-generated local access links are accepted.
+
+Production should use `remna_only` or `remna_or_local`. Local smoke tests can use `local_only`.
+
+### Remnawave Validation
+
+The backend extracts the last path segment from a subscription URL, for example:
+
+```text
+https://subv2.example.com/cDLBZDRS82hEmdMW -> cDLBZDRS82hEmdMW
+```
+
+It then checks Remnawave:
+
+- primary, when API token is configured: `GET /api/subscriptions/by-short-uuid/{shortUuid}`
+- compatibility fallback: `GET /api/sub/{shortUuid}/info`
+
+The expected Remnawave response contains `isFound`, `user.shortUuid`, `user.isActive`, `user.userStatus`, and `user.expiresAt`. A subscription is accepted only when it is found, active, not disabled/revoked, and not expired.
+
 ## Data Model
 
-The access/session model is unchanged by the HTTPS migration.
+The access/session model keeps local access links for tests, but browser sessions can now point to an external Remnawave subscription.
 
 ### `access_links`
 
@@ -79,7 +106,10 @@ The access/session model is unchanged by the HTTPS migration.
 ### `browser_sessions`
 
 - `session_token_hash`: HMAC hash of the raw browser session token
-- `access_link_id`: source access link
+- `access_link_id`: nullable local source access link, used only for local/test mode
+- `source_type`: `local_access_link` or `remna_subscription`
+- `source_ref`: local access link ID or Remnawave short UUID
+- `external_subscription_id`: Remnawave subscription/user identifier snapshot
 - `selected_node_id`: current node choice
 - `default_node_id`: node chosen at session creation
 - `available_node_ids`: JSON snapshot of nodes exposed to the extension
@@ -119,8 +149,8 @@ Input:
 Behavior:
 
 - parses the full access link
-- extracts the token
-- validates the token against `access_links`
+- extracts the local token or Remnawave short UUID
+- validates the URL according to `ACCESS_SOURCE_MODE`
 - creates a short-lived browser session
 - creates initial proxy credentials for the default node
 
@@ -128,7 +158,7 @@ Behavior:
 
 - validates `Authorization: Bearer <session_token>`
 - checks TTL and revoke state
-- checks the source access link is still active
+- checks the local access link or Remnawave subscription is still active
 - returns current node list
 
 ### `GET /browser/proxy-config?node_id=node-1&mode=fixed_servers`
@@ -158,7 +188,8 @@ Returns HTTPS proxy config:
 ```text
 access link URL
   -> POST /browser/exchange-link
-  -> browser session created
+  -> Remnawave subscription validation or local fallback validation
+  -> browser session created with source_type/source_ref
   -> session_token returned
   -> GET /browser/session
   -> GET /browser/proxy-config?node_id=...
@@ -190,6 +221,8 @@ Treat these as secrets:
 
 - raw access-link token
 - full access-link URL
+- Remnawave subscription URL / short UUID
+- `REMNA_API_TOKEN`
 - `session_token`
 - proxy `username`
 - proxy `password`
@@ -197,7 +230,7 @@ Treat these as secrets:
 - `TOKEN_PEPPER`
 - `PROXY_PASSWORD_PEPPER`
 
-The backend never logs raw access links or raw session tokens.
+The backend never logs raw access links, raw Remnawave API token, or raw session tokens.
 
 ## First Local Run
 
@@ -208,6 +241,8 @@ The backend never logs raw access links or raw session tokens.
    - `PROXY_PASSWORD_PEPPER`
    - `ACCESS_LINK_BASE_URL`
    - `PROXY_PUBLIC_HOST`
+   - `ACCESS_SOURCE_MODE`
+   - `REMNA_API_BASE_URL` and `REMNA_API_TOKEN` if using Remnawave mode
 3. Create runtime directories:
    `mkdir -p deploy/data deploy/runtime/tls`
 4. Place trusted TLS cert/key into `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`, or let the installer create a self-signed smoke-test cert.
@@ -215,9 +250,9 @@ The backend never logs raw access links or raw session tokens.
    `cp configs/templates/nodes.json deploy/runtime/nodes.json`
 6. Start the stack:
    `docker compose up -d --build`
-7. Create a test access link:
+7. For local-only testing, set `ACCESS_SOURCE_MODE=local_only` and create a test access link:
    `docker compose --profile tools run --rm admin create-access-link --label local-test --default-node node-1 --expires-in 24h`
-8. Use the returned `access_link_url` in the Chrome extension.
+8. For Remnawave testing, set `ACCESS_SOURCE_MODE=remna_or_local` or `remna_only` and paste a real Remnawave subscription URL into the Chrome extension.
 
 ## One-Command Ubuntu Deployment
 
@@ -244,6 +279,11 @@ What the installer does:
 ## Environment Values You Must Provide
 
 - `ACCESS_LINK_BASE_URL`: public base URL used to form links like `/access/<token>`
+- `ACCESS_SOURCE_MODE`: `remna_only`, `remna_or_local`, or `local_only`
+- `REMNA_API_BASE_URL`: Remnawave panel API origin, for example `https://dev.example.com`
+- `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
+- `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
+- `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
 - `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
 - `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `1443`
 - `BACKEND_PORT`: public backend port, default `18080`
@@ -259,8 +299,9 @@ What the installer does:
 - your real public backend domain
 - your real proxy DNS/host
 - trusted TLS certificate and key for the proxy host
-- the exact access-link format used by your Telegram bot
-- the actual issuance path so the bot writes valid `access_links` rows instead of relying on the admin CLI
+- your Remnawave panel URL and API token
+- the subscription URL format your bot gives to users
+- whether production should use `remna_only` or `remna_or_local`
 
 ## Manual Smoke Checks
 
@@ -268,6 +309,14 @@ Check backend:
 
 ```bash
 curl -fsS http://127.0.0.1:18080/healthz
+```
+
+Check Remnawave exchange:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:18080/browser/exchange-link \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://subv2.example.com/SHORT_UUID"}'
 ```
 
 Check HTTPS proxy TLS:
@@ -288,6 +337,8 @@ curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:1443 https://a
 - `400`: malformed request or unsupported mode
 - `401`: invalid, missing, revoked, or expired session token
 - `403`: invalid or expired access link, or link not allowed to use any node
+- `502`: Remnawave API auth/config problem
+- `503`: Remnawave API unavailable or no nodes configured
 - `404`: node not found
 - `409`: node is offline
 - `501`: optional endpoint not implemented yet
@@ -298,3 +349,4 @@ curl -vk -x https://browser_u_xxx:browser_p_xxx@proxy.example.com:1443 https://a
 - SQLite is acceptable for one-server MVP, but later multi-node deployments should move session state to Postgres or Redis-backed coordination.
 - Restrict allowed Chrome extension IDs before a public rollout.
 - Add rate limiting for `/browser/exchange-link` before public traffic.
+- Keep `REMNA_API_TOKEN` out of shell history, logs, screenshots, and committed files.
