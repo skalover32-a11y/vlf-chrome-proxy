@@ -129,7 +129,9 @@ prepare_runtime() {
   migrate_env_file
   load_env_file
 
-  if [ ! -f "$INSTALL_DIR/deploy/runtime/nodes.json" ]; then
+  if [ "${NODE_ROLE:-all_in_one}" != "all_in_one" ]; then
+    log "NODE_ROLE=${NODE_ROLE:-all_in_one}, skipping local nodes.json bootstrap"
+  elif [ ! -f "$INSTALL_DIR/deploy/runtime/nodes.json" ]; then
     log "generating initial nodes.json from env"
     cat >"$INSTALL_DIR/deploy/runtime/nodes.json" <<EOF
 {
@@ -200,6 +202,32 @@ migrate_env_file() {
   fi
 
   ensure_env_value "ACCESS_SOURCE_MODE" "local_only"
+  ensure_env_value "NODE_ROLE" "all_in_one"
+  ensure_env_value "CENTRAL_BACKEND_URL" ""
+  ensure_env_value "NODE_REGISTRATION_TOKEN" "replace-with-shared-node-registration-secret"
+  [ -n "${NODE_ROLE:-}" ] && set_env_value "NODE_ROLE" "$NODE_ROLE"
+  [ -n "${CENTRAL_BACKEND_URL:-}" ] && set_env_value "CENTRAL_BACKEND_URL" "$CENTRAL_BACKEND_URL"
+  [ -n "${NODE_REGISTRATION_TOKEN:-}" ] && set_env_value "NODE_REGISTRATION_TOKEN" "$NODE_REGISTRATION_TOKEN"
+  [ -n "${NODE_DEFAULT_ID:-}" ] && set_env_value "NODE_DEFAULT_ID" "$NODE_DEFAULT_ID"
+  [ -n "${NODE_DEFAULT_NAME:-}" ] && set_env_value "NODE_DEFAULT_NAME" "$NODE_DEFAULT_NAME"
+  [ -n "${NODE_DEFAULT_COUNTRY:-}" ] && set_env_value "NODE_DEFAULT_COUNTRY" "$NODE_DEFAULT_COUNTRY"
+  [ -n "${NODE_DEFAULT_CITY:-}" ] && set_env_value "NODE_DEFAULT_CITY" "$NODE_DEFAULT_CITY"
+  [ -n "${PROXY_PUBLIC_HOST:-}" ] && set_env_value "PROXY_PUBLIC_HOST" "$PROXY_PUBLIC_HOST"
+  [ -n "${PROXY_PUBLIC_PORT:-}" ] && set_env_value "PROXY_PUBLIC_PORT" "$PROXY_PUBLIC_PORT"
+  local current_node_role
+  current_node_role="$(grep '^NODE_ROLE=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  current_node_role="${NODE_ROLE:-${current_node_role:-all_in_one}}"
+  local current_node_token
+  current_node_token="$(grep '^NODE_REGISTRATION_TOKEN=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  if [ "$current_node_role" = "proxy_node" ]; then
+    if [ -z "$current_node_token" ] || [ "$current_node_token" = "replace-with-shared-node-registration-secret" ]; then
+      echo "NODE_REGISTRATION_TOKEN must be set to the central backend token for NODE_ROLE=proxy_node." >&2
+      exit 1
+    fi
+  elif [ -z "$current_node_token" ] || [ "$current_node_token" = "replace-with-shared-node-registration-secret" ]; then
+    ensure_openssl
+    set_env_value "NODE_REGISTRATION_TOKEN" "$(openssl rand -hex 32)"
+  fi
   ensure_env_value "REMNA_API_BASE_URL" ""
   ensure_env_value "REMNA_API_TOKEN" ""
   ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
@@ -245,7 +273,9 @@ check_port_available() {
 
 preflight_ports() {
   load_env_file
-  check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
+  if [ "${NODE_ROLE:-all_in_one}" != "proxy_node" ]; then
+    check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
+  fi
   check_port_available "${HTTPS_PROXY_PORT:-1443}" "HTTPS_PROXY_PORT"
 }
 
@@ -253,7 +283,17 @@ start_stack() {
   log "building and starting docker compose stack"
   docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy down --remove-orphans || true
   preflight_ports
-  docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans
+  case "${NODE_ROLE:-all_in_one}" in
+    proxy_node)
+      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans https-proxy
+      ;;
+    central)
+      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api
+      ;;
+    *)
+      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api https-proxy
+      ;;
+  esac
 }
 
 bootstrap_access_link() {
@@ -261,6 +301,10 @@ bootstrap_access_link() {
 
   if [ "${AUTO_CREATE_BOOTSTRAP_LINK:-false}" != "true" ]; then
     log "AUTO_CREATE_BOOTSTRAP_LINK is disabled, skipping bootstrap token creation"
+    return
+  fi
+  if [ "${NODE_ROLE:-all_in_one}" = "proxy_node" ]; then
+    log "proxy node role detected, skipping bootstrap token creation"
     return
   fi
 

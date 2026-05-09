@@ -30,8 +30,6 @@ services:
     volumes:
       - ./deploy/data:/data
       - ./deploy/runtime:/runtime
-    depends_on:
-      - api
 
   admin:
     build:

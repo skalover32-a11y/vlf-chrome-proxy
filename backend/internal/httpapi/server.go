@@ -40,6 +40,11 @@ func (s *Server) Handler() http.Handler {
 		r.With(s.requireBearerToken).Get("/ip", s.handleIPStub)
 		r.With(s.requireBearerToken).Get("/pac-config", s.handlePACConfig)
 	})
+	router.Route("/internal", func(r chi.Router) {
+		r.Use(s.requireNodeToken)
+		r.Post("/nodes/register", s.handleNodeRegister)
+		r.Post("/proxy/validate-credentials", s.handleProxyValidateCredentials)
+	})
 
 	return router
 }
@@ -128,6 +133,42 @@ func (s *Server) handlePACConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
+	var payload service.RegisterNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, &service.AppError{
+			Code:    "invalid_json",
+			Message: "Request body is invalid.",
+			Status:  http.StatusBadRequest,
+		})
+		return
+	}
+	node, err := s.service.RegisterNode(r.Context(), payload)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "node": node})
+}
+
+func (s *Server) handleProxyValidateCredentials(w http.ResponseWriter, r *http.Request) {
+	var payload service.ValidateProxyCredentialsRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, &service.AppError{
+			Code:    "invalid_json",
+			Message: "Request body is invalid.",
+			Status:  http.StatusBadRequest,
+		})
+		return
+	}
+	ok, err := s.service.ValidateProxyCredentialsForNode(r.Context(), payload.Username, payload.Password, payload.NodeID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, service.ValidateProxyCredentialsResponse{OK: ok})
+}
+
 func (s *Server) requireBearerToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -142,6 +183,25 @@ func (s *Server) requireBearerToken(next http.Handler) http.Handler {
 		token := strings.TrimSpace(header[len("Bearer "):])
 		ctx := context.WithValue(r.Context(), bearerTokenContextKey{}, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) requireNodeToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := strings.TrimSpace(r.Header.Get("Authorization"))
+		token := ""
+		if strings.HasPrefix(strings.ToLower(header), "bearer ") {
+			token = strings.TrimSpace(header[len("Bearer "):])
+		}
+		if token == "" || s.config.NodeRegistrationToken == "" || token != s.config.NodeRegistrationToken {
+			writeError(w, &service.AppError{
+				Code:    "node_auth_failed",
+				Message: "Node authorization failed.",
+				Status:  http.StatusUnauthorized,
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

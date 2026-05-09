@@ -86,6 +86,30 @@ type PacConfigResponse struct {
 	BypassList []string `json:"bypass_list"`
 }
 
+type RegisterNodeRequest struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Country     string `json:"country"`
+	City        string `json:"city"`
+	Host        string `json:"host"`
+	ProxyPort   int    `json:"proxy_port"`
+	ProxyScheme string `json:"proxy_scheme"`
+	SupportsPAC bool   `json:"supports_pac"`
+	Status      string `json:"status"`
+	LatencyMS   int    `json:"latency_ms"`
+	IsDefault   bool   `json:"is_default"`
+}
+
+type ValidateProxyCredentialsRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	NodeID   string `json:"node_id"`
+}
+
+type ValidateProxyCredentialsResponse struct {
+	OK bool `json:"ok"`
+}
+
 type AccessStatus struct {
 	Source    string `json:"source"`
 	Status    string `json:"status"`
@@ -456,7 +480,61 @@ func (s *Service) Logout(ctx context.Context, rawSessionToken string) error {
 	return nil
 }
 
+func (s *Service) RegisterNode(ctx context.Context, request RegisterNodeRequest) (*AccessNode, error) {
+	node := repository.Node{
+		ID:          strings.TrimSpace(request.ID),
+		Name:        strings.TrimSpace(request.Name),
+		Country:     strings.TrimSpace(request.Country),
+		City:        strings.TrimSpace(request.City),
+		Host:        strings.TrimSpace(request.Host),
+		ProxyPort:   request.ProxyPort,
+		ProxyScheme: strings.TrimSpace(request.ProxyScheme),
+		SupportsPAC: request.SupportsPAC,
+		Status:      strings.TrimSpace(request.Status),
+		LatencyMS:   request.LatencyMS,
+		IsDefault:   request.IsDefault,
+	}
+	if node.ID == "" || node.Name == "" || node.Host == "" || node.ProxyPort <= 0 {
+		return nil, &AppError{
+			Code:    "invalid_node",
+			Message: "Node id, name, host, and proxy_port are required.",
+			Status:  400,
+		}
+	}
+	if node.Country == "" {
+		node.Country = "UN"
+	}
+	if node.City == "" {
+		node.City = "Unknown"
+	}
+	if node.ProxyScheme == "" {
+		node.ProxyScheme = "https"
+	}
+	if node.Status == "" {
+		node.Status = "online"
+	}
+	if err := s.repo.UpsertNodes(ctx, []repository.Node{node}); err != nil {
+		return nil, fmt.Errorf("upsert registered node: %w", err)
+	}
+	return &AccessNode{
+		ID:          node.ID,
+		Name:        node.Name,
+		Country:     node.Country,
+		City:        node.City,
+		Host:        node.Host,
+		ProxyPort:   node.ProxyPort,
+		ProxyScheme: node.ProxyScheme,
+		SupportsPAC: node.SupportsPAC,
+		Status:      node.Status,
+		LatencyMS:   node.LatencyMS,
+	}, nil
+}
+
 func (s *Service) ValidateProxyCredentials(ctx context.Context, username, password string) (bool, error) {
+	return s.ValidateProxyCredentialsForNode(ctx, username, password, "")
+}
+
+func (s *Service) ValidateProxyCredentialsForNode(ctx context.Context, username, password, nodeID string) (bool, error) {
 	bundle, err := s.repo.GetCredentialBundleByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -479,6 +557,9 @@ func (s *Service) ValidateProxyCredentials(ctx context.Context, username, passwo
 		return false, nil
 	}
 	if bundle.Session.Status != "active" || bundle.Node.Status != "online" {
+		return false, nil
+	}
+	if strings.TrimSpace(nodeID) != "" && bundle.Credential.NodeID != strings.TrimSpace(nodeID) {
 		return false, nil
 	}
 	if bundle.AccessLink != nil && bundle.AccessLink.Status != "active" {

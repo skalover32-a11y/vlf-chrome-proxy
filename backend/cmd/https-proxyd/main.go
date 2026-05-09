@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +32,12 @@ func main() {
 		log.Fatalf("start runtime: %v", err)
 	}
 	defer runtime.Close()
+
+	if runtime.Config.NodeRole == "proxy_node" {
+		if err := registerProxyNode(ctx, runtime); err != nil {
+			log.Fatalf("register proxy node: %v", err)
+		}
+	}
 
 	proxy := &httpsProxy{runtime: runtime}
 	server := &http.Server{
@@ -100,6 +108,18 @@ func (p *httpsProxy) authenticate(r *http.Request) (bool, string, string) {
 		return false, username, reason
 	}
 
+	if p.runtime.Config.NodeRole == "proxy_node" {
+		valid, err := p.validateCredentialsWithCentral(r.Context(), username, password)
+		if err != nil {
+			p.runtime.Logger.Error("central proxy credential validation failed", "error", err)
+			return false, username, "central_validation_error"
+		}
+		if !valid {
+			return false, username, "invalid_credentials"
+		}
+		return true, username, "valid"
+	}
+
 	valid, err := p.runtime.Service.ValidateProxyCredentials(r.Context(), username, password)
 	if err != nil {
 		p.runtime.Logger.Error("proxy credential validation failed", "error", err)
@@ -109,6 +129,86 @@ func (p *httpsProxy) authenticate(r *http.Request) (bool, string, string) {
 		return false, username, "invalid_credentials"
 	}
 	return true, username, "valid"
+}
+
+func (p *httpsProxy) validateCredentialsWithCentral(ctx context.Context, username, password string) (bool, error) {
+	payload := map[string]string{
+		"username": username,
+		"password": password,
+		"node_id":  p.runtime.Config.NodeDefaultID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, err
+	}
+	requestURL := p.runtime.Config.CentralBackendURL + "/internal/proxy/validate-credentials"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.runtime.Config.NodeRegistrationToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+	var decoded struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return false, err
+	}
+	return decoded.OK, nil
+}
+
+func registerProxyNode(ctx context.Context, runtime *app.Runtime) error {
+	payload := map[string]any{
+		"id":           runtime.Config.NodeDefaultID,
+		"name":         runtime.Config.NodeDefaultName,
+		"country":      runtime.Config.NodeDefaultCountry,
+		"city":         runtime.Config.NodeDefaultCity,
+		"host":         runtime.Config.ProxyPublicHost,
+		"proxy_port":   runtime.Config.ProxyPublicPort,
+		"proxy_scheme": "https",
+		"supports_pac": true,
+		"status":       "online",
+		"latency_ms":   0,
+		"is_default":   false,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	requestURL := runtime.Config.CentralBackendURL + "/internal/nodes/register"
+	client := &http.Client{Timeout: 15 * time.Second}
+	var lastErr error
+	for attempt := 1; attempt <= 12; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+runtime.Config.NodeRegistrationToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err == nil && resp != nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				runtime.Logger.Info("proxy node registered", "node_id", runtime.Config.NodeDefaultID, "central_backend_url", runtime.Config.CentralBackendURL)
+				return nil
+			}
+			lastErr = fmt.Errorf("central returned status %d", resp.StatusCode)
+		} else if err != nil {
+			lastErr = err
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return lastErr
 }
 
 func (p *httpsProxy) handleConnect(w http.ResponseWriter, r *http.Request, username string) {

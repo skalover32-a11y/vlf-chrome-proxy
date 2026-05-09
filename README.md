@@ -140,6 +140,52 @@ For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `1
 
 Nodes are configured in `deploy/runtime/nodes.json`. `/browser/exchange-link` and `/browser/session` return the full available `nodes[]` array and `default_node_id`. The extension stores `selected_node_id`; `/browser/proxy-config` and `/browser/pac-config` take `node_id` so switching servers does not change the session model.
 
+For automatic multi-node deployment without a shared database, run one central backend and any number of proxy-only nodes:
+
+- Central server keeps the only SQLite database and runs the browser API.
+- Proxy nodes run only `https-proxy`.
+- Each proxy node registers itself through `POST /internal/nodes/register` using `NODE_REGISTRATION_TOKEN`.
+- Each proxy node validates proxy username/password through `POST /internal/proxy/validate-credentials` on the central backend.
+- No SQLite database is shared between servers.
+
+Central server role:
+
+```env
+NODE_ROLE=central
+NODE_REGISTRATION_TOKEN=<shared-random-secret>
+```
+
+Proxy node role:
+
+```env
+NODE_ROLE=proxy_node
+CENTRAL_BACKEND_URL=https://api.example.com
+NODE_REGISTRATION_TOKEN=<same-shared-random-secret>
+NODE_DEFAULT_ID=de-1
+NODE_DEFAULT_NAME="Germany #1"
+NODE_DEFAULT_COUNTRY=DE
+NODE_DEFAULT_CITY=Frankfurt
+PROXY_PUBLIC_HOST=de1.example.com
+PROXY_PUBLIC_PORT=1443
+```
+
+One-command proxy node install example:
+
+```bash
+NODE_ROLE=proxy_node \
+CENTRAL_BACKEND_URL=https://api.example.com \
+NODE_REGISTRATION_TOKEN='<same-shared-random-secret>' \
+NODE_DEFAULT_ID=de-1 \
+NODE_DEFAULT_NAME='Germany #1' \
+NODE_DEFAULT_COUNTRY=DE \
+NODE_DEFAULT_CITY=Frankfurt \
+PROXY_PUBLIC_HOST=de1.example.com \
+PROXY_PUBLIC_PORT=1443 \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh)"
+```
+
+After the proxy node starts, it appears in extension `nodes[]` after session revalidation or popup reopen.
+
 Routing modes:
 
 - `fixed_servers`: Full Proxy; all browser traffic goes through the selected HTTPS proxy node.
@@ -303,6 +349,9 @@ What the installer does:
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
 - `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
 - `SMART_ROUTING_PROXY_DOMAINS`: optional comma-separated server-side domains always routed through proxy in PAC mode. Default is empty; do not put IP-check domains like `2ip.ru` here unless you intentionally want them proxied.
+- `NODE_ROLE`: `all_in_one`, `central`, or `proxy_node`; default `all_in_one`
+- `CENTRAL_BACKEND_URL`: central backend URL used by proxy-only nodes
+- `NODE_REGISTRATION_TOKEN`: shared secret for proxy node registration and remote credential validation
 - `PROXY_PUBLIC_HOST`: public HTTPS proxy host returned to Chrome
 - `PROXY_PUBLIC_PORT`: public HTTPS proxy port, default `1443`
 - `BACKEND_PORT`: public backend port, default `18080`

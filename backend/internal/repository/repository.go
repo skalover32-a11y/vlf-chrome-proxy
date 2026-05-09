@@ -242,8 +242,17 @@ func (r *Repository) UpsertNodes(ctx context.Context, nodes []Node) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET is_default = 0`); err != nil {
-		return err
+	hasDefault := false
+	for _, node := range nodes {
+		if node.IsDefault {
+			hasDefault = true
+			break
+		}
+	}
+	if hasDefault {
+		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET is_default = 0`); err != nil {
+			return err
+		}
 	}
 
 	stmt := `

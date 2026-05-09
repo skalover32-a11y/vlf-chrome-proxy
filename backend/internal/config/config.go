@@ -38,6 +38,15 @@ type Config struct {
 	SmartRoutingProxyDomains        []string
 	ProxyAllowPrivateDestinations   bool
 	ProxyEnableIPv6                 bool
+	NodeRole                        string
+	CentralBackendURL               string
+	NodeRegistrationToken           string
+	NodeDefaultID                   string
+	NodeDefaultName                 string
+	NodeDefaultCountry              string
+	NodeDefaultCity                 string
+	ProxyPublicHost                 string
+	ProxyPublicPort                 int
 }
 
 func Load() (Config, error) {
@@ -68,9 +77,18 @@ func Load() (Config, error) {
 		RemnaAPIToken:                   strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
 		RemnaTimeout:                    secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
 		RemnaAllowInsecureTLS:           boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
-		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com")),
+		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "")),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
 		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),
+		NodeRole:                        env("NODE_ROLE", "all_in_one"),
+		CentralBackendURL:               strings.TrimRight(env("CENTRAL_BACKEND_URL", ""), "/"),
+		NodeRegistrationToken:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_TOKEN")),
+		NodeDefaultID:                   env("NODE_DEFAULT_ID", "node-1"),
+		NodeDefaultName:                 env("NODE_DEFAULT_NAME", "Finland #1"),
+		NodeDefaultCountry:              env("NODE_DEFAULT_COUNTRY", "FI"),
+		NodeDefaultCity:                 env("NODE_DEFAULT_CITY", "Helsinki"),
+		ProxyPublicHost:                 env("PROXY_PUBLIC_HOST", "proxy.example.com"),
+		ProxyPublicPort:                 intEnv("PROXY_PUBLIC_PORT", 1443),
 	}
 
 	if cfg.TokenPepper == "" {
@@ -84,6 +102,12 @@ func Load() (Config, error) {
 	}
 	if modeUsesRemna(cfg.AccessSourceMode) && cfg.RemnaAPIBaseURL == "" {
 		return Config{}, errors.New("REMNA_API_BASE_URL is required when ACCESS_SOURCE_MODE uses remna")
+	}
+	if cfg.NodeRole == "proxy_node" && cfg.CentralBackendURL == "" {
+		return Config{}, errors.New("CENTRAL_BACKEND_URL is required for NODE_ROLE=proxy_node")
+	}
+	if (cfg.NodeRole == "central" || cfg.NodeRole == "all_in_one" || cfg.NodeRole == "proxy_node") && cfg.NodeRegistrationToken == "" {
+		return Config{}, errors.New("NODE_REGISTRATION_TOKEN is required")
 	}
 
 	return cfg, nil
@@ -114,6 +138,18 @@ func boolEnv(name string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func intEnv(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
 	}
