@@ -98,6 +98,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chro
 
 After the proxy node starts, it registers itself in the central backend. The Chrome extension receives the node in `nodes[]` after session revalidation or popup reopen.
 
+Interactive install is also supported:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh)"
+```
+
+Choose `proxy_node`. On a fresh install, the script asks for central backend URL, central registration token, node id, display name, country, city, public proxy host, and proxy port.
+
 ## Notes
 
 - Default deployment pulls prebuilt images from GHCR and does not compile Go on the server.

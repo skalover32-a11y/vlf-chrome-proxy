@@ -76,7 +76,13 @@ ensure_env_value() {
 
 is_placeholder() {
   local value="${1:-}"
-  [ -z "$value" ] || [ "$value" = "replace-with-shared-node-registration-secret" ] || [ "$value" = "proxy.example.com" ]
+  [ -z "$value" ] ||
+    [ "$value" = "replace-with-shared-node-registration-secret" ] ||
+    [ "$value" = "proxy.example.com" ] ||
+    [ "$value" = "node-1" ] ||
+    [ "$value" = "Finland #1" ] ||
+    [ "$value" = "FI" ] ||
+    [ "$value" = "Helsinki" ]
 }
 
 prompt_value() {
@@ -84,10 +90,11 @@ prompt_value() {
   local label="$2"
   local fallback="${3:-}"
   local required="${4:-false}"
+  local force="${5:-false}"
   local current="${!key:-}"
   local answer=""
 
-  if [ -n "$current" ] && ! is_placeholder "$current"; then
+  if [ "$force" != "true" ] && [ -n "$current" ] && ! is_placeholder "$current"; then
     return
   fi
 
@@ -155,14 +162,18 @@ configure_install_mode() {
 
   case "${NODE_ROLE:-all_in_one}" in
     proxy_node)
-      prompt_value "CENTRAL_BACKEND_URL" "Central backend URL, for example https://api.example.com" "" "true"
-      prompt_value "NODE_REGISTRATION_TOKEN" "Node registration token from central backend" "" "true"
-      prompt_value "NODE_DEFAULT_ID" "Node id" "$(hostname -s 2>/dev/null || echo node-1)" "true"
-      prompt_value "NODE_DEFAULT_NAME" "Node display name" "$(hostname -s 2>/dev/null || echo Proxy Node)" "true"
-      prompt_value "NODE_DEFAULT_COUNTRY" "Node country code, for example DE" "DE" "true"
-      prompt_value "NODE_DEFAULT_CITY" "Node city, for example Frankfurt" "Frankfurt" "true"
-      prompt_value "PROXY_PUBLIC_HOST" "Public proxy host for this node" "$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo proxy.example.com)" "true"
-      prompt_value "PROXY_PUBLIC_PORT" "Public proxy port" "1443" "true"
+      local force_proxy_prompts="false"
+      if [ "$ENV_WAS_CREATED" = "true" ]; then
+        force_proxy_prompts="true"
+      fi
+      prompt_value "CENTRAL_BACKEND_URL" "Central backend URL, for example https://api.example.com" "" "true" "$force_proxy_prompts"
+      prompt_value "NODE_REGISTRATION_TOKEN" "Node registration token from central backend" "" "true" "$force_proxy_prompts"
+      prompt_value "NODE_DEFAULT_ID" "Node id, for example de-1" "$(hostname -s 2>/dev/null || echo node-1)" "true" "$force_proxy_prompts"
+      prompt_value "NODE_DEFAULT_NAME" "Node display name, for example Germany #1" "$(hostname -s 2>/dev/null || echo Proxy Node)" "true" "$force_proxy_prompts"
+      prompt_value "NODE_DEFAULT_COUNTRY" "Node country code, for example DE" "DE" "true" "$force_proxy_prompts"
+      prompt_value "NODE_DEFAULT_CITY" "Node city, for example Frankfurt" "Frankfurt" "true" "$force_proxy_prompts"
+      prompt_value "PROXY_PUBLIC_HOST" "Public proxy host for this node, for example de1.example.com" "$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo proxy.example.com)" "true" "$force_proxy_prompts"
+      prompt_value "PROXY_PUBLIC_PORT" "Public proxy port" "1443" "true" "$force_proxy_prompts"
       ;;
     central)
       prompt_value "BACKEND_PORT" "Public backend port" "18080" "true"
