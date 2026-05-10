@@ -334,6 +334,28 @@ On a clean Ubuntu host:
 curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh | bash
 ```
 
+By default the installer does not build Go/Docker images on the server. It pulls prebuilt images from GHCR:
+
+- `ghcr.io/skalover32-a11y/vlf-chrome-proxy-api:main`
+- `ghcr.io/skalover32-a11y/vlf-chrome-proxy-https-proxy:main`
+- `ghcr.io/skalover32-a11y/vlf-chrome-proxy-admin:main`
+
+Use server-side builds only when explicitly needed:
+
+```bash
+BUILD_ON_SERVER=true bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh)"
+```
+
+If GHCR packages are private, either make the container packages public in GitHub Packages or pass `GHCR_USERNAME` and `GHCR_TOKEN` when running the installer.
+
+Central backend install without building on the server:
+
+```bash
+NODE_ROLE=central \
+BACKEND_PORT=18080 \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh)"
+```
+
 What the installer does:
 
 - installs Docker Engine and Docker Compose plugin if missing
@@ -341,9 +363,10 @@ What the installer does:
 - creates `.env` from `.env.example` if needed
 - migrates old SOCKS5 env/node defaults to HTTPS proxy defaults
 - creates runtime directories
-- generates `deploy/runtime/nodes.json` from env if missing
-- creates a self-signed TLS bootstrap cert if no cert/key exists
-- builds and starts `api` and `https-proxy`
+- generates `deploy/runtime/nodes.json` from env if needed for `all_in_one`
+- creates a self-signed TLS bootstrap cert for proxy roles if no cert/key exists
+- pulls prebuilt Docker images and starts only the services required by `NODE_ROLE`
+- can still build locally when `BUILD_ON_SERVER=true`
 - removes old compose orphan containers
 - optionally creates a bootstrap access link
 - prints compose status
@@ -352,6 +375,8 @@ What the installer does:
 
 - `ACCESS_LINK_BASE_URL`: public base URL used to form links like `/access/<token>`
 - `ACCESS_SOURCE_MODE`: `remna_only`, `remna_or_local`, or `local_only`
+- `BUILD_ON_SERVER`: `false` by default; use prebuilt GHCR images instead of compiling on VPS
+- `IMAGE_TAG`: image tag to pull, default `main`
 - `REMNA_API_BASE_URL`: Remnawave panel API origin, for example `https://dev.example.com`
 - `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`

@@ -1,5 +1,6 @@
 services:
   api:
+    image: ghcr.io/skalover32-a11y/vlf-chrome-proxy-api:${IMAGE_TAG:-main}
     build:
       context: ./backend
       target: api
@@ -16,6 +17,7 @@ services:
       - ./deploy/runtime:/runtime
 
   https-proxy:
+    image: ghcr.io/skalover32-a11y/vlf-chrome-proxy-https-proxy:${IMAGE_TAG:-main}
     build:
       context: ./backend
       target: https-proxyd
@@ -32,6 +34,7 @@ services:
       - ./deploy/runtime:/runtime
 
   admin:
+    image: ghcr.io/skalover32-a11y/vlf-chrome-proxy-admin:${IMAGE_TAG:-main}
     build:
       context: ./backend
       target: admin

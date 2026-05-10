@@ -203,6 +203,13 @@ install_docker() {
   systemctl start docker
 }
 
+docker_login_if_configured() {
+  if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+    log "logging in to ghcr.io"
+    printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+  fi
+}
+
 ensure_openssl() {
   if need_cmd openssl; then
     return
@@ -288,7 +295,9 @@ EOF
 EOF
   fi
 
-  ensure_tls_material
+  if [ "${NODE_ROLE:-all_in_one}" != "central" ]; then
+    ensure_tls_material
+  fi
 }
 
 migrate_env_file() {
@@ -314,6 +323,8 @@ migrate_env_file() {
   fi
 
   ensure_env_value "ACCESS_SOURCE_MODE" "local_only"
+  ensure_env_value "BUILD_ON_SERVER" "false"
+  ensure_env_value "IMAGE_TAG" "main"
   ensure_env_value "NODE_ROLE" "all_in_one"
   ensure_env_value "CENTRAL_BACKEND_URL" ""
   ensure_env_value "NODE_REGISTRATION_TOKEN" "replace-with-shared-node-registration-secret"
@@ -380,25 +391,50 @@ check_port_available() {
 
 preflight_ports() {
   load_env_file
-  if [ "${NODE_ROLE:-all_in_one}" != "proxy_node" ]; then
-    check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
-  fi
-  check_port_available "${HTTPS_PROXY_PORT:-1443}" "HTTPS_PROXY_PORT"
+  case "${NODE_ROLE:-all_in_one}" in
+    proxy_node)
+      check_port_available "${HTTPS_PROXY_PORT:-1443}" "HTTPS_PROXY_PORT"
+      ;;
+    central)
+      check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
+      ;;
+    *)
+      check_port_available "${BACKEND_PORT:-18080}" "BACKEND_PORT"
+      check_port_available "${HTTPS_PROXY_PORT:-1443}" "HTTPS_PROXY_PORT"
+      ;;
+  esac
 }
 
 start_stack() {
-  log "building and starting docker compose stack"
+  log "starting docker compose stack"
   docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy down --remove-orphans || true
   preflight_ports
+  docker_login_if_configured
+
   case "${NODE_ROLE:-all_in_one}" in
     proxy_node)
-      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans https-proxy
+      if [ "${BUILD_ON_SERVER:-false}" = "true" ]; then
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans https-proxy
+      else
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy pull https-proxy
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --no-build --remove-orphans https-proxy
+      fi
       ;;
     central)
-      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api
+      if [ "${BUILD_ON_SERVER:-false}" = "true" ]; then
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api
+      else
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy pull api admin
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --no-build --remove-orphans api
+      fi
       ;;
     *)
-      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api https-proxy
+      if [ "${BUILD_ON_SERVER:-false}" = "true" ]; then
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --build --remove-orphans api https-proxy
+      else
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy pull api https-proxy admin
+        docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy up -d --no-build --remove-orphans api https-proxy
+      fi
       ;;
   esac
 }
