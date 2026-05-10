@@ -91,7 +91,7 @@ type nodeFile struct {
 func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path string, nodeRole string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if nodeRole == "central" && os.IsNotExist(err) {
+		if nodeRoleAllowsMissingNodeConfig(nodeRole) && os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("read node config %s: %w", path, err)
@@ -102,7 +102,7 @@ func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path st
 		return fmt.Errorf("parse node config: %w", err)
 	}
 	if len(cfg.Nodes) == 0 {
-		if nodeRole == "central" {
+		if nodeRoleAllowsMissingNodeConfig(nodeRole) {
 			return nil
 		}
 		return fmt.Errorf("node config %s does not contain any nodes", path)
@@ -115,4 +115,8 @@ func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path st
 		}
 	}
 	return repo.UpsertNodes(ctx, cfg.Nodes)
+}
+
+func nodeRoleAllowsMissingNodeConfig(nodeRole string) bool {
+	return nodeRole == "central" || nodeRole == "proxy_node"
 }
