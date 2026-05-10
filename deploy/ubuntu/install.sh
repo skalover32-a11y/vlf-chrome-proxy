@@ -231,6 +231,16 @@ ensure_openssl() {
   apt-get install -y openssl
 }
 
+ensure_certbot() {
+  if need_cmd certbot; then
+    return
+  fi
+
+  log "installing certbot for trusted proxy TLS certificate"
+  apt-get update -y
+  apt-get install -y certbot
+}
+
 sync_repo() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     log "updating existing repository in $INSTALL_DIR"
@@ -376,6 +386,12 @@ ensure_tls_material() {
     return
   fi
 
+  if [ "${NODE_ROLE:-all_in_one}" = "proxy_node" ] || [ "${NODE_ROLE:-all_in_one}" = "all_in_one" ]; then
+    if obtain_letsencrypt_proxy_cert; then
+      return
+    fi
+  fi
+
   ensure_openssl
   log "generating self-signed HTTPS proxy certificate for bootstrap"
   openssl req -x509 -newkey rsa:2048 -nodes \
@@ -386,6 +402,63 @@ ensure_tls_material() {
     -addext "subjectAltName=DNS:${PROXY_PUBLIC_HOST:-proxy.example.com}" >/dev/null 2>&1
   chmod 600 "$key_path"
   log "replace deploy/runtime/tls/proxy.crt and proxy.key with trusted production certs before real Chrome testing"
+}
+
+obtain_letsencrypt_proxy_cert() {
+  local host="${PROXY_PUBLIC_HOST:-}"
+  local cert_path="$INSTALL_DIR/deploy/runtime/tls/proxy.crt"
+  local key_path="$INSTALL_DIR/deploy/runtime/tls/proxy.key"
+
+  if [ -z "$host" ] || [ "$host" = "proxy.example.com" ]; then
+    log "PROXY_PUBLIC_HOST is not a real domain, skipping Let's Encrypt certificate"
+    return 1
+  fi
+  if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log "PROXY_PUBLIC_HOST is an IP address, skipping Let's Encrypt certificate"
+    return 1
+  fi
+  if ss -ltn "( sport = :80 )" | tail -n +2 | grep -q .; then
+    log "port 80 is already in use, cannot use certbot standalone for $host"
+    ss -ltnp "( sport = :80 )" || true
+    return 1
+  fi
+
+  ensure_certbot
+  log "requesting Let's Encrypt certificate for $host"
+  if ! certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "$host"; then
+    log "Let's Encrypt certificate request failed for $host, falling back to self-signed certificate"
+    return 1
+  fi
+
+  cp "/etc/letsencrypt/live/$host/fullchain.pem" "$cert_path"
+  cp "/etc/letsencrypt/live/$host/privkey.pem" "$key_path"
+  chmod 644 "$cert_path"
+  chmod 600 "$key_path"
+  install_renew_hook "$host"
+  log "installed trusted Let's Encrypt proxy certificate for $host"
+}
+
+install_renew_hook() {
+  local host="$1"
+  local hook_path="/etc/letsencrypt/renewal-hooks/deploy/vlf-proxy-${host}.sh"
+
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat >"$hook_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="$INSTALL_DIR"
+DOMAIN="$host"
+
+cp "/etc/letsencrypt/live/\${DOMAIN}/fullchain.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.crt"
+cp "/etc/letsencrypt/live/\${DOMAIN}/privkey.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.key"
+chmod 644 "\${APP_DIR}/deploy/runtime/tls/proxy.crt"
+chmod 600 "\${APP_DIR}/deploy/runtime/tls/proxy.key"
+
+cd "\${APP_DIR}"
+docker compose --env-file .env -p vlf_chrome_proxy restart https-proxy
+EOF
+  chmod +x "$hook_path"
 }
 
 check_port_available() {

@@ -192,6 +192,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chro
 
 If required values are missing, the installer asks for the install role and writes answers to `.env`. For `central`, it asks for the backend port and generates `NODE_REGISTRATION_TOKEN` automatically. Copy that token from `/opt/vlf-chrome-proxy/.env` and use it on proxy nodes. For a fresh `proxy_node`, it always asks for `CENTRAL_BACKEND_URL`, `NODE_REGISTRATION_TOKEN`, node id/name/country/city, `PROXY_PUBLIC_HOST`, and `PROXY_PUBLIC_PORT` instead of silently accepting template defaults.
 
+For proxy nodes, the installer tries to issue a trusted Let's Encrypt certificate for `PROXY_PUBLIC_HOST` before starting `https-proxy`. Keep DNS pointed to the proxy node and leave port `80/tcp` free for ACME HTTP validation. The installed certificate is copied to `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`; a certbot renewal hook refreshes these files and restarts `https-proxy`. If Let's Encrypt fails, the installer falls back to a self-signed bootstrap certificate, which Chrome will reject with `ERR_PROXY_CERTIFICATE_INVALID` until replaced.
+
 After the proxy node starts, it appears in extension `nodes[]` after session revalidation or popup reopen.
 
 Routing modes:
@@ -285,7 +287,14 @@ Environment paths inside containers:
 - `HTTPS_PROXY_TLS_CERT_PATH=/runtime/tls/proxy.crt`
 - `HTTPS_PROXY_TLS_KEY_PATH=/runtime/tls/proxy.key`
 
-The installer creates a 30-day self-signed certificate only as a bootstrap fallback. For real Chrome testing, replace it with a trusted certificate for `PROXY_PUBLIC_HOST`.
+For `NODE_ROLE=proxy_node`, the installer attempts to obtain a Let's Encrypt certificate for `PROXY_PUBLIC_HOST` automatically using certbot standalone mode. Requirements:
+
+- `PROXY_PUBLIC_HOST` must be a real DNS name, not an IP address.
+- DNS must point to the proxy node public IP.
+- `80/tcp` must be reachable and not occupied during issuance.
+- `1443/tcp` must be reachable for Chrome HTTPS proxy traffic.
+
+The installer creates a 30-day self-signed certificate only as a bootstrap fallback. If Chrome shows `ERR_PROXY_CERTIFICATE_INVALID`, the proxy node is still using the fallback certificate.
 
 ## Sensitive Fields
 
@@ -364,7 +373,7 @@ What the installer does:
 - migrates old SOCKS5 env/node defaults to HTTPS proxy defaults
 - creates runtime directories
 - generates `deploy/runtime/nodes.json` from env if needed for `all_in_one`
-- creates a self-signed TLS bootstrap cert for proxy roles if no cert/key exists
+- requests a Let's Encrypt proxy certificate for proxy roles, falling back to self-signed only if issuance fails
 - pulls prebuilt Docker images and starts only the services required by `NODE_ROLE`
 - can still build locally when `BUILD_ON_SERVER=true`
 - removes old compose orphan containers

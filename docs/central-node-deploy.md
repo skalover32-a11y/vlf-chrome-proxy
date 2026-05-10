@@ -106,6 +106,36 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chro
 
 Choose `proxy_node`. On a fresh install, the script asks for central backend URL, central registration token, node id, display name, country, city, public proxy host, and proxy port.
 
+For proxy nodes, `PROXY_PUBLIC_HOST` must be a real DNS name pointing to the proxy server, for example `ltu1.clearforfun.tech`. The installer automatically tries to issue a Let's Encrypt certificate with certbot standalone mode before starting `https-proxy`.
+
+Requirements on every proxy node:
+
+- DNS for `PROXY_PUBLIC_HOST` points to this proxy node.
+- `80/tcp` is open and free during certificate issuance.
+- `1443/tcp` is open for Chrome HTTPS proxy traffic.
+
+Open the ports:
+
+```bash
+ufw allow 80/tcp
+ufw allow 1443/tcp
+```
+
+If certificate issuance succeeds, the installer writes:
+
+```text
+/opt/vlf-chrome-proxy/deploy/runtime/tls/proxy.crt
+/opt/vlf-chrome-proxy/deploy/runtime/tls/proxy.key
+```
+
+and installs a renewal hook under:
+
+```text
+/etc/letsencrypt/renewal-hooks/deploy/
+```
+
+If Let's Encrypt fails, the installer falls back to a self-signed certificate. Chrome will reject that proxy with `ERR_PROXY_CERTIFICATE_INVALID`, so fix DNS/port 80 and rerun the installer.
+
 ## Notes
 
 - Default deployment pulls prebuilt images from GHCR and does not compile Go on the server.
