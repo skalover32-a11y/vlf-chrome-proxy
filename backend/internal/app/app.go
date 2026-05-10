@@ -44,7 +44,7 @@ func New(ctx context.Context) (*Runtime, error) {
 	}
 
 	repo := repository.New(db)
-	if err := syncNodesFromFile(ctx, repo, cfg.NodeConfigPath); err != nil {
+	if err := syncNodesFromFile(ctx, repo, cfg.NodeConfigPath, cfg.NodeRole); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -88,9 +88,12 @@ type nodeFile struct {
 	Nodes []repository.Node `json:"nodes"`
 }
 
-func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path string) error {
+func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path string, nodeRole string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if nodeRole == "central" && os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("read node config %s: %w", path, err)
 	}
 
@@ -99,6 +102,9 @@ func syncNodesFromFile(ctx context.Context, repo *repository.Repository, path st
 		return fmt.Errorf("parse node config: %w", err)
 	}
 	if len(cfg.Nodes) == 0 {
+		if nodeRole == "central" {
+			return nil
+		}
 		return fmt.Errorf("node config %s does not contain any nodes", path)
 	}
 
