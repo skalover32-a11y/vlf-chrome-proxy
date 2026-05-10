@@ -5,6 +5,7 @@ REPO_URL="${REPO_URL:-https://github.com/skalover32-a11y/vlf-chrome-proxy.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vlf-chrome-proxy}"
 BRANCH="${BRANCH:-main}"
 ENV_FILE="${ENV_FILE:-$INSTALL_DIR/.env}"
+ENV_WAS_CREATED="false"
 
 log() {
   printf '\n[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -73,6 +74,114 @@ ensure_env_value() {
   fi
 }
 
+is_placeholder() {
+  local value="${1:-}"
+  [ -z "$value" ] || [ "$value" = "replace-with-shared-node-registration-secret" ] || [ "$value" = "proxy.example.com" ]
+}
+
+prompt_value() {
+  local key="$1"
+  local label="$2"
+  local fallback="${3:-}"
+  local required="${4:-false}"
+  local current="${!key:-}"
+  local answer=""
+
+  if [ -n "$current" ] && ! is_placeholder "$current"; then
+    return
+  fi
+
+  if [ ! -r /dev/tty ]; then
+    if [ "$required" = "true" ]; then
+      echo "$key is required. Pass it as an env var or run installer from an interactive terminal." >&2
+      exit 1
+    fi
+    return
+  fi
+
+  while true; do
+    if [ -n "$fallback" ]; then
+      printf '%s [%s]: ' "$label" "$fallback" >/dev/tty
+    else
+      printf '%s: ' "$label" >/dev/tty
+    fi
+    IFS= read -r answer </dev/tty
+    answer="$(trim "$answer")"
+    if [ -z "$answer" ]; then
+      answer="$fallback"
+    fi
+    if [ -n "$answer" ] || [ "$required" != "true" ]; then
+      set_env_value "$key" "$answer"
+      export "$key=$answer"
+      return
+    fi
+  done
+}
+
+prompt_role() {
+  local current="${NODE_ROLE:-}"
+  local answer=""
+
+  if [ -n "$current" ] && [ "$current" != "all_in_one" ]; then
+    return
+  fi
+  if [ "$ENV_WAS_CREATED" != "true" ] && [ -n "$current" ]; then
+    return
+  fi
+  if [ ! -r /dev/tty ]; then
+    return
+  fi
+
+  while true; do
+    printf 'Install role: all_in_one, central, or proxy_node [all_in_one]: ' >/dev/tty
+    IFS= read -r answer </dev/tty
+    answer="$(trim "$answer")"
+    answer="${answer:-all_in_one}"
+    case "$answer" in
+      all_in_one|central|proxy_node)
+        set_env_value "NODE_ROLE" "$answer"
+        export NODE_ROLE="$answer"
+        return
+        ;;
+      *)
+        echo "Please enter all_in_one, central, or proxy_node." >/dev/tty
+        ;;
+    esac
+  done
+}
+
+configure_install_mode() {
+  prompt_role
+
+  case "${NODE_ROLE:-all_in_one}" in
+    proxy_node)
+      prompt_value "CENTRAL_BACKEND_URL" "Central backend URL, for example https://api.example.com" "" "true"
+      prompt_value "NODE_REGISTRATION_TOKEN" "Node registration token from central backend" "" "true"
+      prompt_value "NODE_DEFAULT_ID" "Node id" "$(hostname -s 2>/dev/null || echo node-1)" "true"
+      prompt_value "NODE_DEFAULT_NAME" "Node display name" "$(hostname -s 2>/dev/null || echo Proxy Node)" "true"
+      prompt_value "NODE_DEFAULT_COUNTRY" "Node country code, for example DE" "DE" "true"
+      prompt_value "NODE_DEFAULT_CITY" "Node city, for example Frankfurt" "Frankfurt" "true"
+      prompt_value "PROXY_PUBLIC_HOST" "Public proxy host for this node" "$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo proxy.example.com)" "true"
+      prompt_value "PROXY_PUBLIC_PORT" "Public proxy port" "1443" "true"
+      ;;
+    central)
+      prompt_value "BACKEND_PORT" "Public backend port" "18080" "true"
+      if is_placeholder "${NODE_REGISTRATION_TOKEN:-}"; then
+        ensure_openssl
+        set_env_value "NODE_REGISTRATION_TOKEN" "$(openssl rand -hex 32)"
+      fi
+      ;;
+    *)
+      prompt_value "PROXY_PUBLIC_HOST" "Public proxy host for this all-in-one server" "$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo proxy.example.com)" "true"
+      prompt_value "PROXY_PUBLIC_PORT" "Public proxy port" "1443" "true"
+      if is_placeholder "${NODE_REGISTRATION_TOKEN:-}"; then
+        ensure_openssl
+        set_env_value "NODE_REGISTRATION_TOKEN" "$(openssl rand -hex 32)"
+      fi
+      ;;
+  esac
+}
+
 install_docker() {
   if need_cmd docker && docker compose version >/dev/null 2>&1; then
     log "docker and docker compose already installed"
@@ -123,10 +232,13 @@ prepare_runtime() {
   if [ ! -f "$ENV_FILE" ]; then
     log "creating $ENV_FILE from template"
     cp "$INSTALL_DIR/.env.example" "$ENV_FILE"
+    ENV_WAS_CREATED="true"
     log "edit $ENV_FILE and rerun if you need production values"
   fi
 
   migrate_env_file
+  load_env_file
+  configure_install_mode
   load_env_file
 
   if [ "${NODE_ROLE:-all_in_one}" != "all_in_one" ]; then
@@ -219,12 +331,7 @@ migrate_env_file() {
   current_node_role="${NODE_ROLE:-${current_node_role:-all_in_one}}"
   local current_node_token
   current_node_token="$(grep '^NODE_REGISTRATION_TOKEN=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
-  if [ "$current_node_role" = "proxy_node" ]; then
-    if [ -z "$current_node_token" ] || [ "$current_node_token" = "replace-with-shared-node-registration-secret" ]; then
-      echo "NODE_REGISTRATION_TOKEN must be set to the central backend token for NODE_ROLE=proxy_node." >&2
-      exit 1
-    fi
-  elif [ -z "$current_node_token" ] || [ "$current_node_token" = "replace-with-shared-node-registration-secret" ]; then
+  if [ "$current_node_role" != "proxy_node" ] && { [ -z "$current_node_token" ] || [ "$current_node_token" = "replace-with-shared-node-registration-secret" ]; }; then
     ensure_openssl
     set_env_value "NODE_REGISTRATION_TOKEN" "$(openssl rand -hex 32)"
   fi
