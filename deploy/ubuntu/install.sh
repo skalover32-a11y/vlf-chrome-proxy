@@ -412,6 +412,22 @@ ensure_tls_material() {
   log "replace deploy/runtime/tls/proxy.crt and proxy.key with trusted production certs before real Chrome testing"
 }
 
+validate_proxy_tls_files() {
+  if [ "${NODE_ROLE:-all_in_one}" = "central" ]; then
+    return
+  fi
+
+  local cert_path="$INSTALL_DIR/deploy/runtime/tls/proxy.crt"
+  local key_path="$INSTALL_DIR/deploy/runtime/tls/proxy.key"
+
+  if [ ! -s "$cert_path" ] || [ ! -s "$key_path" ]; then
+    echo "Proxy TLS cert/key are missing." >&2
+    echo "Expected: $cert_path and $key_path" >&2
+    echo "Fix DNS/port 80 for PROXY_PUBLIC_HOST=${PROXY_PUBLIC_HOST:-} and rerun the installer." >&2
+    exit 1
+  fi
+}
+
 obtain_letsencrypt_proxy_cert() {
   local host="${PROXY_PUBLIC_HOST:-}"
   local cert_path="$INSTALL_DIR/deploy/runtime/tls/proxy.crt"
@@ -557,6 +573,7 @@ start_stack() {
   log "starting docker compose stack"
   docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy down --remove-orphans || true
   preflight_ports
+  validate_proxy_tls_files
   docker_login_if_configured
 
   case "${NODE_ROLE:-all_in_one}" in

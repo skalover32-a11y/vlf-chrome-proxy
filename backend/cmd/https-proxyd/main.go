@@ -33,6 +33,10 @@ func main() {
 	}
 	defer runtime.Close()
 
+	if err := validateTLSMaterial(runtime); err != nil {
+		log.Fatalf("validate proxy tls material: %v", err)
+	}
+
 	if runtime.Config.NodeRole == "proxy_node" {
 		if err := registerProxyNode(ctx, runtime); err != nil {
 			log.Fatalf("register proxy node: %v", err)
@@ -58,6 +62,13 @@ func main() {
 	if err := server.ListenAndServeTLS(runtime.Config.HTTPSProxyTLSCertPath, runtime.Config.HTTPSProxyTLSKeyPath); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen https proxy: %v", err)
 	}
+}
+
+func validateTLSMaterial(runtime *app.Runtime) error {
+	if _, err := tls.LoadX509KeyPair(runtime.Config.HTTPSProxyTLSCertPath, runtime.Config.HTTPSProxyTLSKeyPath); err != nil {
+		return err
+	}
+	return nil
 }
 
 type httpsProxy struct {
