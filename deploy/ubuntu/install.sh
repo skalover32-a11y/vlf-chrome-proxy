@@ -371,6 +371,7 @@ migrate_env_file() {
   ensure_env_value "REMNA_API_TOKEN" ""
   ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
   ensure_env_value "REMNA_ALLOW_INSECURE_TLS" "false"
+  ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
   if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
@@ -390,6 +391,13 @@ ensure_tls_material() {
     if obtain_letsencrypt_proxy_cert; then
       return
     fi
+  fi
+
+  if [ "${NODE_ROLE:-all_in_one}" = "proxy_node" ] && [ "${ALLOW_SELF_SIGNED_PROXY_CERT:-false}" != "true" ]; then
+    echo "Trusted proxy TLS certificate is required for NODE_ROLE=proxy_node." >&2
+    echo "Fix DNS/port 80 for PROXY_PUBLIC_HOST=${PROXY_PUBLIC_HOST:-} and rerun the installer." >&2
+    echo "Set ALLOW_SELF_SIGNED_PROXY_CERT=true only for local smoke tests; Chrome will reject it for real browsing." >&2
+    exit 1
   fi
 
   ensure_openssl
@@ -417,6 +425,7 @@ obtain_letsencrypt_proxy_cert() {
     log "PROXY_PUBLIC_HOST is an IP address, skipping Let's Encrypt certificate"
     return 1
   fi
+  validate_proxy_dns "$host" || return 1
   if ss -ltn "( sport = :80 )" | tail -n +2 | grep -q .; then
     log "port 80 is already in use, cannot use certbot standalone for $host"
     ss -ltnp "( sport = :80 )" || true
@@ -459,6 +468,61 @@ cd "\${APP_DIR}"
 docker compose --env-file .env -p vlf_chrome_proxy restart https-proxy
 EOF
   chmod +x "$hook_path"
+}
+
+detect_public_ipv4() {
+  local ip=""
+  ip="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$ip" ]; then
+    ip="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
+  fi
+  printf '%s' "$ip"
+}
+
+resolve_ipv4s() {
+  local host="$1"
+  getent ahostsv4 "$host" | awk '{print $1}' | sort -u | tr '\n' ' '
+}
+
+contains_word() {
+  local needle="$1"
+  local haystack="$2"
+  for item in $haystack; do
+    if [ "$item" = "$needle" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_proxy_dns() {
+  local host="$1"
+  local public_ip
+  local resolved_ips
+
+  public_ip="$(detect_public_ipv4)"
+  resolved_ips="$(resolve_ipv4s "$host")"
+
+  if [ -z "$resolved_ips" ]; then
+    log "DNS check failed: $host does not resolve to any IPv4 address"
+    return 1
+  fi
+
+  if [ -z "$public_ip" ]; then
+    log "public IPv4 detection failed, continuing without DNS/IP precheck"
+    return 0
+  fi
+
+  if ! contains_word "$public_ip" "$resolved_ips"; then
+    log "DNS check failed for $host"
+    log "server public IPv4: $public_ip"
+    log "DNS IPv4 records: $resolved_ips"
+    log "Point $host A record to this server before requesting Let's Encrypt certificate."
+    return 1
+  fi
+
+  log "DNS check ok: $host resolves to this server IPv4 $public_ip"
+  return 0
 }
 
 check_port_available() {

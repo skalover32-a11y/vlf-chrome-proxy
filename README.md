@@ -192,7 +192,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chro
 
 If required values are missing, the installer asks for the install role and writes answers to `.env`. For `central`, it asks for the backend port and generates `NODE_REGISTRATION_TOKEN` automatically. Copy that token from `/opt/vlf-chrome-proxy/.env` and use it on proxy nodes. For a fresh `proxy_node`, it always asks for `CENTRAL_BACKEND_URL`, `NODE_REGISTRATION_TOKEN`, node id/name/country/city, `PROXY_PUBLIC_HOST`, and `PROXY_PUBLIC_PORT` instead of silently accepting template defaults.
 
-For proxy nodes, the installer tries to issue a trusted Let's Encrypt certificate for `PROXY_PUBLIC_HOST` before starting `https-proxy`. Keep DNS pointed to the proxy node and leave port `80/tcp` free for ACME HTTP validation. The installed certificate is copied to `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`; a certbot renewal hook refreshes these files and restarts `https-proxy`. If Let's Encrypt fails, the installer falls back to a self-signed bootstrap certificate, which Chrome will reject with `ERR_PROXY_CERTIFICATE_INVALID` until replaced.
+For proxy nodes, the installer tries to issue a trusted Let's Encrypt certificate for `PROXY_PUBLIC_HOST` before starting `https-proxy`. Keep DNS pointed to the proxy node and leave port `80/tcp` free for ACME HTTP validation. The installed certificate is copied to `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`; a certbot renewal hook refreshes these files and restarts `https-proxy`. If Let's Encrypt fails, the installer stops by default because Chrome rejects self-signed HTTPS proxy certificates with `ERR_PROXY_CERTIFICATE_INVALID`. Use `ALLOW_SELF_SIGNED_PROXY_CERT=true` only for local smoke tests.
 
 After the proxy node starts, it appears in extension `nodes[]` after session revalidation or popup reopen.
 
@@ -294,7 +294,7 @@ For `NODE_ROLE=proxy_node`, the installer attempts to obtain a Let's Encrypt cer
 - `80/tcp` must be reachable and not occupied during issuance.
 - `1443/tcp` must be reachable for Chrome HTTPS proxy traffic.
 
-The installer creates a 30-day self-signed certificate only as a bootstrap fallback. If Chrome shows `ERR_PROXY_CERTIFICATE_INVALID`, the proxy node is still using the fallback certificate.
+For `NODE_ROLE=proxy_node`, self-signed fallback is disabled by default. If Chrome shows `ERR_PROXY_CERTIFICATE_INVALID`, the proxy node is still using an old fallback certificate; remove `deploy/runtime/tls/proxy.crt` and `proxy.key`, fix DNS/port 80, then rerun the installer.
 
 ## Sensitive Fields
 
@@ -400,6 +400,7 @@ What the installer does:
 - `HTTPS_PROXY_PORT`: host port mapped to the HTTPS proxy container, default `1443`
 - `HTTPS_PROXY_TLS_CERT_PATH`: container path to proxy certificate
 - `HTTPS_PROXY_TLS_KEY_PATH`: container path to proxy private key
+- `ALLOW_SELF_SIGNED_PROXY_CERT`: default `false`; set `true` only for local smoke tests because Chrome rejects self-signed proxy certificates
 - `PROXY_ENABLE_IPV6`: enable outbound IPv6 dialing from the proxy, default `false`
 - `TOKEN_PEPPER`: HMAC secret for access/session token hashing
 - `PROXY_PASSWORD_PEPPER`: HMAC secret for derived proxy passwords

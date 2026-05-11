@@ -134,7 +134,13 @@ and installs a renewal hook under:
 /etc/letsencrypt/renewal-hooks/deploy/
 ```
 
-If Let's Encrypt fails, the installer falls back to a self-signed certificate. Chrome will reject that proxy with `ERR_PROXY_CERTIFICATE_INVALID`, so fix DNS/port 80 and rerun the installer.
+If Let's Encrypt fails, the installer stops by default because Chrome rejects self-signed HTTPS proxy certificates with `ERR_PROXY_CERTIFICATE_INVALID`. The installer also checks that `PROXY_PUBLIC_HOST` resolves to the proxy server public IPv4 before requesting the certificate. If the DNS check fails, fix the A record and rerun the installer.
+
+For local smoke tests only, you can allow the old self-signed fallback:
+
+```bash
+ALLOW_SELF_SIGNED_PROXY_CERT=true bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chrome-proxy/main/deploy/ubuntu/install.sh)"
+```
 
 ## Notes
 
