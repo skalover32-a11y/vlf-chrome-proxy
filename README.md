@@ -2,6 +2,19 @@
 
 Production-like minimal backend for a Chrome extension that validates Remnawave subscription links, creates short-lived browser sessions, and returns HTTPS proxy credentials.
 
+## Security, Privacy and Transparency
+
+This repository is part of the VLF ecosystem. The following documents describe the security, privacy, architecture and audit-readiness status of this component:
+
+- [Security Policy](./SECURITY.md)
+- [Privacy Overview](./PRIVACY.md)
+- [Architecture](./ARCHITECTURE.md)
+- [Audit Status](./AUDIT.md)
+- [Threat Model](./THREAT_MODEL.md)
+- [Changelog](./CHANGELOG.md)
+
+Please note: A formal independent third-party security audit has not yet been completed unless explicitly stated in `AUDIT.md`.
+
 ## What Is Included
 
 - Go backend access/session layer
