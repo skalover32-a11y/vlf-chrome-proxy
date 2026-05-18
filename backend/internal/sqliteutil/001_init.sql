@@ -70,5 +70,4 @@ CREATE TABLE IF NOT EXISTS proxy_credentials (
 
 CREATE INDEX IF NOT EXISTS idx_access_links_token_hash ON access_links(token_hash);
 CREATE INDEX IF NOT EXISTS idx_browser_sessions_token_hash ON browser_sessions(session_token_hash);
-CREATE INDEX IF NOT EXISTS idx_browser_sessions_refresh_token_hash ON browser_sessions(refresh_token_hash);
 CREATE INDEX IF NOT EXISTS idx_proxy_credentials_username ON proxy_credentials(username);
