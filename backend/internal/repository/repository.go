@@ -50,6 +50,7 @@ type BrowserSession struct {
 	SourceRef              string
 	ExternalSubscriptionID string
 	SessionTokenHash       string
+	RefreshTokenHash       string
 	SelectedNodeID         string
 	DefaultNodeID          string
 	AvailableNodeIDs       []string
@@ -103,6 +104,7 @@ type CreateSessionParams struct {
 	SourceRef              string
 	ExternalSubscriptionID string
 	SessionTokenHash       string
+	RefreshTokenHash       string
 	SelectedNodeID         string
 	DefaultNodeID          string
 	AvailableNodeIDs       []string
@@ -353,6 +355,7 @@ func (r *Repository) CreateSession(ctx context.Context, params CreateSessionPara
 		SourceRef:              strings.TrimSpace(params.SourceRef),
 		ExternalSubscriptionID: strings.TrimSpace(params.ExternalSubscriptionID),
 		SessionTokenHash:       params.SessionTokenHash,
+		RefreshTokenHash:       strings.TrimSpace(params.RefreshTokenHash),
 		SelectedNodeID:         strings.TrimSpace(params.SelectedNodeID),
 		DefaultNodeID:          strings.TrimSpace(params.DefaultNodeID),
 		AvailableNodeIDs:       append([]string(nil), params.AvailableNodeIDs...),
@@ -368,15 +371,16 @@ func (r *Repository) CreateSession(ctx context.Context, params CreateSessionPara
 		ctx,
 		`INSERT INTO browser_sessions (
 			id, access_link_id, source_type, source_ref, external_subscription_id,
-			session_token_hash, selected_node_id, default_node_id,
+			session_token_hash, refresh_token_hash, selected_node_id, default_node_id,
 			available_node_ids, status, expires_at, client_ip, user_agent, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID,
 		nullString(session.AccessLinkID),
 		session.SourceType,
 		nullString(session.SourceRef),
 		nullString(session.ExternalSubscriptionID),
 		session.SessionTokenHash,
+		nullString(session.RefreshTokenHash),
 		nullString(session.SelectedNodeID),
 		nullString(session.DefaultNodeID),
 		availableJSON,
@@ -395,24 +399,32 @@ func (r *Repository) CreateSession(ctx context.Context, params CreateSessionPara
 }
 
 func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash string) (*SessionBundle, error) {
+	return r.getSessionBundle(ctx, "s.session_token_hash = ?", tokenHash)
+}
+
+func (r *Repository) GetSessionBundleByRefreshTokenHash(ctx context.Context, tokenHash string) (*SessionBundle, error) {
+	return r.getSessionBundle(ctx, "s.refresh_token_hash = ?", tokenHash)
+}
+
+func (r *Repository) getSessionBundle(ctx context.Context, where string, arg string) (*SessionBundle, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			s.id, s.access_link_id, s.source_type, s.source_ref, s.external_subscription_id,
-			s.session_token_hash, s.selected_node_id, s.default_node_id,
+			s.session_token_hash, s.refresh_token_hash, s.selected_node_id, s.default_node_id,
 			s.available_node_ids, s.status, s.expires_at, s.last_seen_at, s.revoked_at,
 			s.client_ip, s.user_agent, s.created_at, s.updated_at,
 			a.id, a.token_hash, a.label, a.source, a.status, a.allowed_node_ids, a.default_node_id,
 			a.expires_at, a.last_exchanged_at, a.revoked_at, a.created_at, a.updated_at
 		FROM browser_sessions s
 		LEFT JOIN access_links a ON a.id = s.access_link_id
-		WHERE s.session_token_hash = ?
-	`, tokenHash)
+		WHERE `+where, arg)
 
 	var (
 		session              BrowserSession
 		sessionAccessLinkID  sql.NullString
 		sessionSourceRef     sql.NullString
 		sessionExternalID    sql.NullString
+		sessionRefreshHash   sql.NullString
 		sessionSelectedNode  sql.NullString
 		sessionDefaultNode   sql.NullString
 		sessionAvailableJSON string
@@ -445,6 +457,7 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 		&sessionSourceRef,
 		&sessionExternalID,
 		&session.SessionTokenHash,
+		&sessionRefreshHash,
 		&sessionSelectedNode,
 		&sessionDefaultNode,
 		&sessionAvailableJSON,
@@ -483,6 +496,7 @@ func (r *Repository) GetSessionBundleByTokenHash(ctx context.Context, tokenHash 
 	session.AccessLinkID = sessionAccessLinkID.String
 	session.SourceRef = sessionSourceRef.String
 	session.ExternalSubscriptionID = sessionExternalID.String
+	session.RefreshTokenHash = sessionRefreshHash.String
 	session.SelectedNodeID = sessionSelectedNode.String
 	session.DefaultNodeID = sessionDefaultNode.String
 	session.AvailableNodeIDs = availableNodeIDs
@@ -533,6 +547,18 @@ func (r *Repository) ExtendSession(ctx context.Context, id string, expiresAt tim
 	_, err := r.db.ExecContext(
 		ctx,
 		`UPDATE browser_sessions SET expires_at = ?, updated_at = ? WHERE id = ?`,
+		timeString(expiresAt.UTC()),
+		timeString(when.UTC()),
+		id,
+	)
+	return err
+}
+
+func (r *Repository) RotateSessionToken(ctx context.Context, id string, sessionTokenHash string, expiresAt time.Time, when time.Time) error {
+	_, err := r.db.ExecContext(
+		ctx,
+		`UPDATE browser_sessions SET session_token_hash = ?, expires_at = ?, updated_at = ? WHERE id = ?`,
+		sessionTokenHash,
 		timeString(expiresAt.UTC()),
 		timeString(when.UTC()),
 		id,

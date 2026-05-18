@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS browser_sessions (
     source_ref TEXT,
     external_subscription_id TEXT,
     session_token_hash TEXT NOT NULL UNIQUE,
+    refresh_token_hash TEXT UNIQUE,
     selected_node_id TEXT,
     default_node_id TEXT,
     available_node_ids TEXT NOT NULL DEFAULT '[]',
@@ -69,4 +70,5 @@ CREATE TABLE IF NOT EXISTS proxy_credentials (
 
 CREATE INDEX IF NOT EXISTS idx_access_links_token_hash ON access_links(token_hash);
 CREATE INDEX IF NOT EXISTS idx_browser_sessions_token_hash ON browser_sessions(session_token_hash);
+CREATE INDEX IF NOT EXISTS idx_browser_sessions_refresh_token_hash ON browser_sessions(refresh_token_hash);
 CREATE INDEX IF NOT EXISTS idx_proxy_credentials_username ON proxy_credentials(username);

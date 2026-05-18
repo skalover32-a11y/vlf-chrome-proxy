@@ -48,6 +48,7 @@ type ExchangeLinkRequest struct {
 
 type ExchangeLinkResponse struct {
 	SessionToken  string       `json:"session_token"`
+	RefreshToken  string       `json:"refresh_token,omitempty"`
 	ExpiresAt     string       `json:"expires_at"`
 	Nodes         []AccessNode `json:"nodes"`
 	DefaultNodeID string       `json:"default_node_id"`
@@ -63,6 +64,8 @@ type SessionResponse struct {
 	DefaultMode   string       `json:"default_mode"`
 	Subscription  AccessStatus `json:"subscription"`
 }
+
+type RefreshSessionResponse = ExchangeLinkResponse
 
 type ProxyConfigResponse struct {
 	Mode       string   `json:"mode"`
@@ -211,7 +214,7 @@ func (s *Service) exchangeLocalAccessLink(ctx context.Context, request ExchangeL
 		return nil, err
 	}
 
-	sessionToken, session, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
+	sessionToken, refreshToken, session, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
 		AccessLinkID:   link.ID,
 		SourceType:     "local_access_link",
 		SourceRef:      link.ID,
@@ -237,6 +240,7 @@ func (s *Service) exchangeLocalAccessLink(ctx context.Context, request ExchangeL
 
 	return &ExchangeLinkResponse{
 		SessionToken:  sessionToken,
+		RefreshToken:  refreshToken,
 		ExpiresAt:     expiresAt.Format(time.RFC3339),
 		Nodes:         mapNodes(nodes),
 		DefaultNodeID: defaultNodeID,
@@ -276,7 +280,7 @@ func (s *Service) exchangeRemnaSubscription(ctx context.Context, request Exchang
 		return nil, err
 	}
 
-	sessionToken, _, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
+	sessionToken, refreshToken, _, expiresAt, err := s.createBrowserSession(ctx, nodes, repository.CreateSessionParams{
 		SourceType:             "remna_subscription",
 		SourceRef:              shortUUID,
 		ExternalSubscriptionID: subscription.ShortUUID,
@@ -298,6 +302,7 @@ func (s *Service) exchangeRemnaSubscription(ctx context.Context, request Exchang
 
 	return &ExchangeLinkResponse{
 		SessionToken:  sessionToken,
+		RefreshToken:  refreshToken,
 		ExpiresAt:     expiresAt.Format(time.RFC3339),
 		Nodes:         mapNodes(nodes),
 		DefaultNodeID: defaultNodeID,
@@ -329,6 +334,61 @@ func (s *Service) ValidateSession(ctx context.Context, rawSessionToken string) (
 		DefaultMode:   "fixed_servers",
 		Subscription:  s.accessStatus(bundle.Session.SourceType),
 	}, bundle, nil
+}
+
+func (s *Service) RefreshSession(ctx context.Context, rawRefreshToken string) (*RefreshSessionResponse, error) {
+	rawRefreshToken = strings.TrimSpace(rawRefreshToken)
+	if rawRefreshToken == "" {
+		return nil, &AppError{
+			Code:    "refresh_token_missing",
+			Message: "Refresh token is missing.",
+			Status:  401,
+		}
+	}
+
+	bundle, err := s.repo.GetSessionBundleByRefreshTokenHash(ctx, s.tokenManager.HashRefreshToken(rawRefreshToken))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, &AppError{
+				Code:    "refresh_token_invalid",
+				Message: "Refresh token is invalid.",
+				Status:  401,
+			}
+		}
+		return nil, fmt.Errorf("find refresh session: %w", err)
+	}
+	if err := s.validateSessionBundle(ctx, bundle); err != nil {
+		return nil, err
+	}
+
+	sessionToken, sessionHash, err := s.tokenManager.NewSessionToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate session token: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if err := s.repo.RotateSessionToken(ctx, bundle.Session.ID, sessionHash, bundle.Session.ExpiresAt, now); err != nil {
+		return nil, fmt.Errorf("rotate session token: %w", err)
+	}
+	bundle.Session.SessionTokenHash = sessionHash
+
+	nodes, defaultNodeID, err := s.resolveNodesForSession(ctx, bundle)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.TouchSessionSeen(ctx, bundle.Session.ID, now); err != nil {
+		s.logger.Warn("touch session seen failed", slog.String("session_id", bundle.Session.ID), slog.Any("error", err))
+	}
+
+	return &RefreshSessionResponse{
+		SessionToken:  sessionToken,
+		RefreshToken:  rawRefreshToken,
+		ExpiresAt:     bundle.Session.ExpiresAt.UTC().Format(time.RFC3339),
+		Nodes:         mapNodes(nodes),
+		DefaultNodeID: defaultNodeID,
+		DefaultMode:   "fixed_servers",
+		Subscription:  s.accessStatus(bundle.Session.SourceType),
+	}, nil
 }
 
 func (s *Service) GetProxyConfig(
@@ -654,9 +714,16 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 		return nil, fmt.Errorf("find session: %w", err)
 	}
 
+	if err := s.validateSessionBundle(ctx, bundle); err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
+
+func (s *Service) validateSessionBundle(ctx context.Context, bundle *repository.SessionBundle) error {
 	now := time.Now().UTC()
 	if bundle.Session.RevokedAt != nil || bundle.Session.Status != "active" {
-		return nil, &AppError{
+		return &AppError{
 			Code:    "session_revoked",
 			Message: "Session has been revoked.",
 			Status:  401,
@@ -670,11 +737,11 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 				s.logger.Warn("revoke invalid remna session failed", slog.String("session_id", bundle.Session.ID), slog.Any("error", revokeErr))
 			}
 		}
-		return nil, err
+		return err
 	}
 
 	if bundle.Session.ExpiresAt.Before(now) && now.Sub(bundle.Session.ExpiresAt) > s.sessionRefreshGrace {
-		return nil, &AppError{
+		return &AppError{
 			Code:    "session_expired",
 			Message: "Session expired.",
 			Status:  401,
@@ -682,9 +749,9 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 	}
 
 	if err := s.renewSession(ctx, &bundle.Session, sourceExpiresAt, now); err != nil {
-		return nil, err
+		return err
 	}
-	return bundle, nil
+	return nil
 }
 
 func (s *Service) validateSessionSource(ctx context.Context, bundle *repository.SessionBundle) (time.Time, error) {
@@ -732,10 +799,14 @@ func (s *Service) createBrowserSession(
 	ctx context.Context,
 	nodes []repository.Node,
 	params repository.CreateSessionParams,
-) (string, *repository.BrowserSession, time.Time, error) {
+) (string, string, *repository.BrowserSession, time.Time, error) {
 	sessionToken, sessionHash, err := s.tokenManager.NewSessionToken()
 	if err != nil {
-		return "", nil, time.Time{}, fmt.Errorf("generate session token: %w", err)
+		return "", "", nil, time.Time{}, fmt.Errorf("generate session token: %w", err)
+	}
+	refreshToken, refreshHash, err := s.tokenManager.NewRefreshToken()
+	if err != nil {
+		return "", "", nil, time.Time{}, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	expiresAt := time.Now().UTC().Add(s.sessionTTL)
@@ -747,19 +818,20 @@ func (s *Service) createBrowserSession(
 		availableNodeIDs = append(availableNodeIDs, node.ID)
 	}
 	params.SessionTokenHash = sessionHash
+	params.RefreshTokenHash = refreshHash
 	params.AvailableNodeIDs = availableNodeIDs
 	params.ExpiresAt = expiresAt
 
 	session, err := s.repo.CreateSession(ctx, params)
 	if err != nil {
-		return "", nil, time.Time{}, fmt.Errorf("create session: %w", err)
+		return "", "", nil, time.Time{}, fmt.Errorf("create session: %w", err)
 	}
 
 	if _, err := s.ensureProxyCredential(ctx, session, params.DefaultNodeID); err != nil {
-		return "", nil, time.Time{}, fmt.Errorf("ensure proxy credential: %w", err)
+		return "", "", nil, time.Time{}, fmt.Errorf("ensure proxy credential: %w", err)
 	}
 
-	return sessionToken, session, expiresAt, nil
+	return sessionToken, refreshToken, session, expiresAt, nil
 }
 
 func subscriptionExpiry(subscription *remna.Subscription) time.Time {

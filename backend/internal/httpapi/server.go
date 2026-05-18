@@ -34,6 +34,7 @@ func (s *Server) Handler() http.Handler {
 
 	router.Route("/browser", func(r chi.Router) {
 		r.Post("/exchange-link", s.handleExchangeLink)
+		r.Post("/refresh-session", s.handleRefreshSession)
 		r.With(s.requireBearerToken).Get("/session", s.handleSession)
 		r.With(s.requireBearerToken).Get("/proxy-config", s.handleProxyConfig)
 		r.With(s.requireBearerToken).Post("/logout", s.handleLogout)
@@ -71,6 +72,28 @@ func (s *Server) handleExchangeLink(w http.ResponseWriter, r *http.Request) {
 		ClientIP:  clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleRefreshSession(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, &service.AppError{
+			Code:    "invalid_json",
+			Message: "Request body is invalid.",
+			Status:  http.StatusBadRequest,
+		})
+		return
+	}
+
+	response, err := s.service.RefreshSession(r.Context(), payload.RefreshToken)
 	if err != nil {
 		writeServiceError(w, err)
 		return

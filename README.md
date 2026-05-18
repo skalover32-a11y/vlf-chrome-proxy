@@ -116,6 +116,7 @@ The access/session model keeps local access links for tests, but browser session
 - `default_node_id`: node chosen at session creation
 - `available_node_ids`: JSON snapshot of nodes exposed to the extension
 - `expires_at`: browser session TTL, default 24h; `/browser/session` renews it while the source subscription/access link is still valid
+- `refresh_token_hash`: HMAC hash of the device refresh token; lets the extension issue a new short-lived `session_token` without storing or asking for the original Remnawave link again
 - `SESSION_REFRESH_GRACE_HOURS`: expired-session grace window for renewal after browser sleep/offline time, default 168h
 - `revoked_at`: explicit local logout/revoke path
 

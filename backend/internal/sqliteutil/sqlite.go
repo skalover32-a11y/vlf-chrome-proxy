@@ -61,6 +61,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		"source_type":              "TEXT NOT NULL DEFAULT 'local_access_link'",
 		"source_ref":               "TEXT",
 		"external_subscription_id": "TEXT",
+		"refresh_token_hash":       "TEXT",
 	}
 	for name, definition := range columns {
 		exists, err := columnExists(ctx, db, "browser_sessions", name)
@@ -73,6 +74,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE browser_sessions ADD COLUMN %s %s", name, definition)); err != nil {
 			return err
 		}
+	}
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_browser_sessions_refresh_token_hash ON browser_sessions(refresh_token_hash)`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -87,6 +91,7 @@ func rebuildBrowserSessions(ctx context.Context, db *sql.DB) error {
 			source_ref TEXT,
 			external_subscription_id TEXT,
 			session_token_hash TEXT NOT NULL UNIQUE,
+			refresh_token_hash TEXT UNIQUE,
 			selected_node_id TEXT,
 			default_node_id TEXT,
 			available_node_ids TEXT NOT NULL DEFAULT '[]',
@@ -102,12 +107,12 @@ func rebuildBrowserSessions(ctx context.Context, db *sql.DB) error {
 		)`,
 		`INSERT INTO browser_sessions_new (
 			id, access_link_id, source_type, source_ref, external_subscription_id,
-			session_token_hash, selected_node_id, default_node_id, available_node_ids,
+			session_token_hash, refresh_token_hash, selected_node_id, default_node_id, available_node_ids,
 			status, expires_at, last_seen_at, revoked_at, client_ip, user_agent, created_at, updated_at
 		)
 		SELECT
 			id, access_link_id, 'local_access_link', access_link_id, NULL,
-			session_token_hash, selected_node_id, default_node_id, available_node_ids,
+			session_token_hash, NULL, selected_node_id, default_node_id, available_node_ids,
 			status, expires_at, last_seen_at, revoked_at, client_ip, user_agent, created_at, updated_at
 		FROM browser_sessions`,
 		"DROP TABLE browser_sessions",

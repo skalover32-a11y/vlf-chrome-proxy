@@ -29,12 +29,20 @@ func (m *Manager) NewSessionToken() (raw string, hash string, err error) {
 	return m.newScopedToken("sess", "session")
 }
 
+func (m *Manager) NewRefreshToken() (raw string, hash string, err error) {
+	return m.newScopedToken("rfs", "refresh")
+}
+
 func (m *Manager) HashAccessToken(raw string) string {
 	return m.hash("access", raw)
 }
 
 func (m *Manager) HashSessionToken(raw string) string {
 	return m.hash("session", raw)
+}
+
+func (m *Manager) HashRefreshToken(raw string) string {
+	return m.hash("refresh", raw)
 }
 
 func (m *Manager) NewProxyUsername() (string, error) {
