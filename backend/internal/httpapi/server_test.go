@@ -163,6 +163,7 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		logging.New("error"),
 		tokenManager,
 		24*time.Hour,
+		7*24*time.Hour,
 		24*time.Hour,
 		[]string{"<local>", "127.0.0.1"},
 		"https://access.example.com",

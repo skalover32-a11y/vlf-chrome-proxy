@@ -115,7 +115,8 @@ The access/session model keeps local access links for tests, but browser session
 - `selected_node_id`: current node choice
 - `default_node_id`: node chosen at session creation
 - `available_node_ids`: JSON snapshot of nodes exposed to the extension
-- `expires_at`: session TTL, default 24h
+- `expires_at`: browser session TTL, default 24h; `/browser/session` renews it while the source subscription/access link is still valid
+- `SESSION_REFRESH_GRACE_HOURS`: expired-session grace window for renewal after browser sleep/offline time, default 168h
 - `revoked_at`: explicit local logout/revoke path
 
 ### `proxy_credentials`

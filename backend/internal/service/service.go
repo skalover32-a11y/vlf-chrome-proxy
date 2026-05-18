@@ -121,6 +121,7 @@ type Service struct {
 	logger              *slog.Logger
 	tokenManager        *tokens.Manager
 	sessionTTL          time.Duration
+	sessionRefreshGrace time.Duration
 	proxyCredentialTTL  time.Duration
 	defaultBypassList   []string
 	accessLinkBaseURL   string
@@ -135,6 +136,7 @@ func New(
 	logger *slog.Logger,
 	tokenManager *tokens.Manager,
 	sessionTTL time.Duration,
+	sessionRefreshGrace time.Duration,
 	proxyCredentialTTL time.Duration,
 	defaultBypassList []string,
 	accessLinkBaseURL string,
@@ -148,6 +150,7 @@ func New(
 		logger:              logger,
 		tokenManager:        tokenManager,
 		sessionTTL:          sessionTTL,
+		sessionRefreshGrace: sessionRefreshGrace,
 		proxyCredentialTTL:  proxyCredentialTTL,
 		defaultBypassList:   append([]string(nil), defaultBypassList...),
 		accessLinkBaseURL:   accessLinkBaseURL,
@@ -659,34 +662,70 @@ func (s *Service) loadAndValidateSession(ctx context.Context, rawSessionToken st
 			Status:  401,
 		}
 	}
-	if bundle.Session.ExpiresAt.Before(now) {
+
+	sourceExpiresAt, err := s.validateSessionSource(ctx, bundle)
+	if err != nil {
+		if bundle.Session.SourceType == "remna_subscription" {
+			if revokeErr := s.repo.RevokeSession(ctx, bundle.Session.ID, time.Now().UTC()); revokeErr != nil {
+				s.logger.Warn("revoke invalid remna session failed", slog.String("session_id", bundle.Session.ID), slog.Any("error", revokeErr))
+			}
+		}
+		return nil, err
+	}
+
+	if bundle.Session.ExpiresAt.Before(now) && now.Sub(bundle.Session.ExpiresAt) > s.sessionRefreshGrace {
 		return nil, &AppError{
 			Code:    "session_expired",
 			Message: "Session expired.",
 			Status:  401,
 		}
 	}
+
+	if err := s.renewSession(ctx, &bundle.Session, sourceExpiresAt, now); err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
+
+func (s *Service) validateSessionSource(ctx context.Context, bundle *repository.SessionBundle) (time.Time, error) {
 	switch bundle.Session.SourceType {
 	case "remna_subscription":
-		if err := s.validateRemnaSessionSource(ctx, &bundle.Session); err != nil {
-			if revokeErr := s.repo.RevokeSession(ctx, bundle.Session.ID, time.Now().UTC()); revokeErr != nil {
-				s.logger.Warn("revoke invalid remna session failed", slog.String("session_id", bundle.Session.ID), slog.Any("error", revokeErr))
-			}
-			return nil, err
-		}
+		return s.validateRemnaSessionSource(ctx, &bundle.Session)
 	default:
 		if bundle.AccessLink == nil {
-			return nil, &AppError{
+			return time.Time{}, &AppError{
 				Code:    "access_source_missing",
 				Message: "Access source is missing.",
 				Status:  401,
 			}
 		}
 		if err := validateAccessLink(bundle.AccessLink); err != nil {
-			return nil, err
+			return time.Time{}, err
+		}
+		return bundle.AccessLink.ExpiresAt.UTC(), nil
+	}
+}
+
+func (s *Service) renewSession(ctx context.Context, session *repository.BrowserSession, sourceExpiresAt time.Time, now time.Time) error {
+	nextExpiresAt := now.UTC().Add(s.sessionTTL)
+	if !sourceExpiresAt.IsZero() && sourceExpiresAt.Before(nextExpiresAt) {
+		nextExpiresAt = sourceExpiresAt.UTC()
+	}
+	if !nextExpiresAt.After(now) {
+		return &AppError{
+			Code:    "session_expired",
+			Message: "Session expired.",
+			Status:  401,
 		}
 	}
-	return bundle, nil
+	if session.ExpiresAt.After(now) && !nextExpiresAt.After(session.ExpiresAt.Add(time.Minute)) {
+		return nil
+	}
+	if err := s.repo.ExtendSession(ctx, session.ID, nextExpiresAt, now.UTC()); err != nil {
+		return fmt.Errorf("extend session: %w", err)
+	}
+	session.ExpiresAt = nextExpiresAt
+	return nil
 }
 
 func (s *Service) createBrowserSession(
@@ -797,9 +836,9 @@ func (s *Service) resolveAllNodes(ctx context.Context) ([]repository.Node, strin
 	return nodes, chooseDefaultNode("", nodes), nil
 }
 
-func (s *Service) validateRemnaSessionSource(ctx context.Context, session *repository.BrowserSession) error {
+func (s *Service) validateRemnaSessionSource(ctx context.Context, session *repository.BrowserSession) (time.Time, error) {
 	if s.remnaClient == nil {
-		return &AppError{
+		return time.Time{}, &AppError{
 			Code:    "remna_not_configured",
 			Message: "Subscription validation is not configured.",
 			Status:  503,
@@ -807,9 +846,12 @@ func (s *Service) validateRemnaSessionSource(ctx context.Context, session *repos
 	}
 	subscription, err := s.remnaClient.GetSubscriptionByShortUUID(ctx, session.SourceRef)
 	if err != nil {
-		return mapRemnaError(err)
+		return time.Time{}, mapRemnaError(err)
 	}
-	return validateRemnaSubscription(subscription)
+	if err := validateRemnaSubscription(subscription); err != nil {
+		return time.Time{}, err
+	}
+	return subscriptionExpiry(subscription), nil
 }
 
 func validateRemnaSubscription(subscription *remna.Subscription) error {

@@ -59,6 +59,7 @@ func New(ctx context.Context) (*Runtime, error) {
 		logger,
 		tokenManager,
 		cfg.SessionTTL,
+		cfg.SessionRefreshGrace,
 		cfg.ProxyCredentialTTL,
 		cfg.DefaultBypassList,
 		cfg.AccessLinkBaseURL,

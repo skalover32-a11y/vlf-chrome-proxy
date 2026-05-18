@@ -24,6 +24,7 @@ type Config struct {
 	TokenPepper                     string
 	ProxyPasswordPepper             string
 	SessionTTL                      time.Duration
+	SessionRefreshGrace             time.Duration
 	ProxyCredentialTTL              time.Duration
 	DefaultBypassList               []string
 	CORSAllowedOrigins              []string
@@ -66,6 +67,7 @@ func Load() (Config, error) {
 			os.Getenv("PROXY_PASSWORD_PEPPER"),
 		),
 		SessionTTL:                      durationEnv("SESSION_TTL_HOURS", 24*time.Hour),
+		SessionRefreshGrace:             durationEnv("SESSION_REFRESH_GRACE_HOURS", 7*24*time.Hour),
 		ProxyCredentialTTL:              durationEnv("PROXY_CREDENTIAL_TTL_HOURS", 24*time.Hour),
 		DefaultBypassList:               csv(env("DEFAULT_BYPASS_LIST", "<local>,127.0.0.1")),
 		CORSAllowedOrigins:              csv(os.Getenv("CORS_ALLOWED_ORIGINS")),

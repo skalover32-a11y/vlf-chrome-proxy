@@ -529,6 +529,17 @@ func (r *Repository) TouchSessionSeen(ctx context.Context, id string, when time.
 	return err
 }
 
+func (r *Repository) ExtendSession(ctx context.Context, id string, expiresAt time.Time, when time.Time) error {
+	_, err := r.db.ExecContext(
+		ctx,
+		`UPDATE browser_sessions SET expires_at = ?, updated_at = ? WHERE id = ?`,
+		timeString(expiresAt.UTC()),
+		timeString(when.UTC()),
+		id,
+	)
+	return err
+}
+
 func (r *Repository) RevokeSession(ctx context.Context, sessionID string, when time.Time) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
