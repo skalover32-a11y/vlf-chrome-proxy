@@ -898,14 +898,25 @@ func (s *Service) resolveAllNodes(ctx context.Context) ([]repository.Node, strin
 	if err != nil {
 		return nil, "", fmt.Errorf("list nodes: %w", err)
 	}
-	if len(nodes) == 0 {
+	onlineNodes := filterOnlineNodes(nodes)
+	if len(onlineNodes) == 0 {
 		return nil, "", &AppError{
 			Code:    "no_nodes_available",
-			Message: "No proxy nodes are configured.",
+			Message: "No online proxy nodes are configured.",
 			Status:  503,
 		}
 	}
-	return nodes, chooseDefaultNode("", nodes), nil
+	return onlineNodes, chooseDefaultNode("", onlineNodes), nil
+}
+
+func filterOnlineNodes(nodes []repository.Node) []repository.Node {
+	filtered := make([]repository.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if strings.EqualFold(strings.TrimSpace(node.Status), "online") {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
 }
 
 func (s *Service) validateRemnaSessionSource(ctx context.Context, session *repository.BrowserSession) (time.Time, error) {
