@@ -626,8 +626,8 @@ func (s *Service) SyncNodesFromRemna(ctx context.Context) ([]AccessNode, error) 
 		}
 	}
 
-	if err := s.repo.UpsertNodes(ctx, nodes); err != nil {
-		return nil, fmt.Errorf("upsert remna nodes: %w", err)
+	if err := s.repo.SyncNodes(ctx, nodes); err != nil {
+		return nil, fmt.Errorf("sync remna nodes: %w", err)
 	}
 
 	s.logger.Info("remna nodes synced", slog.Int("count", len(nodes)))

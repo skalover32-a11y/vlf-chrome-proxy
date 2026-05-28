@@ -302,6 +302,33 @@ func (r *Repository) UpsertNodes(ctx context.Context, nodes []Node) error {
 	return tx.Commit()
 }
 
+func (r *Repository) SyncNodes(ctx context.Context, nodes []Node) error {
+	if err := r.UpsertNodes(ctx, nodes); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	if len(nodes) == 0 {
+		_, err := r.db.ExecContext(ctx, `UPDATE nodes SET status = 'offline', is_default = 0, updated_at = ?`, timeString(now))
+		return err
+	}
+
+	placeholders := make([]string, 0, len(nodes))
+	args := make([]any, 0, len(nodes)+1)
+	args = append(args, timeString(now))
+	for _, node := range nodes {
+		placeholders = append(placeholders, "?")
+		args = append(args, node.ID)
+	}
+
+	_, err := r.db.ExecContext(
+		ctx,
+		`UPDATE nodes SET status = 'offline', is_default = 0, updated_at = ? WHERE id NOT IN (`+strings.Join(placeholders, ",")+`)`,
+		args...,
+	)
+	return err
+}
+
 func (r *Repository) ListNodes(ctx context.Context) ([]Node, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, name, country, city, host, proxy_port, proxy_scheme,
