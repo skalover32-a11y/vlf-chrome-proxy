@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,6 +104,11 @@ type RegisterNodeRequest struct {
 	IsDefault   bool   `json:"is_default"`
 }
 
+type RemnaNodeSyncConfig struct {
+	ProxyPort    int
+	ExcludeNames []string
+}
+
 type ValidateProxyCredentialsRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -130,6 +136,7 @@ type Service struct {
 	accessLinkBaseURL   string
 	accessSourceMode    string
 	remnaClient         *remna.Client
+	remnaNodeSync       RemnaNodeSyncConfig
 	smartRoutingDomains []string
 	proxyAllowPrivateIP bool
 }
@@ -145,6 +152,7 @@ func New(
 	accessLinkBaseURL string,
 	accessSourceMode string,
 	remnaClient *remna.Client,
+	remnaNodeSync RemnaNodeSyncConfig,
 	smartRoutingDomains []string,
 	proxyAllowPrivateIP bool,
 ) *Service {
@@ -159,6 +167,7 @@ func New(
 		accessLinkBaseURL:   accessLinkBaseURL,
 		accessSourceMode:    accessSourceMode,
 		remnaClient:         remnaClient,
+		remnaNodeSync:       remnaNodeSync,
 		smartRoutingDomains: append([]string(nil), smartRoutingDomains...),
 		proxyAllowPrivateIP: proxyAllowPrivateIP,
 	}
@@ -591,6 +600,133 @@ func (s *Service) RegisterNode(ctx context.Context, request RegisterNodeRequest)
 		Status:      node.Status,
 		LatencyMS:   node.LatencyMS,
 	}, nil
+}
+
+func (s *Service) SyncNodesFromRemna(ctx context.Context) ([]AccessNode, error) {
+	if s.remnaClient == nil {
+		return nil, &AppError{
+			Code:    "remna_not_configured",
+			Message: "Remna node sync is not configured.",
+			Status:  503,
+		}
+	}
+
+	remnaNodes, err := s.remnaClient.ListNodes(ctx)
+	if err != nil {
+		return nil, mapRemnaError(err)
+	}
+
+	nodes := mapRemnaNodes(remnaNodes, s.remnaNodeSync)
+	if len(nodes) == 0 {
+		return nil, &AppError{
+			Code:    "no_nodes_available",
+			Message: "Remna did not return any usable nodes.",
+			Status:  503,
+		}
+	}
+
+	if err := s.repo.UpsertNodes(ctx, nodes); err != nil {
+		return nil, fmt.Errorf("upsert remna nodes: %w", err)
+	}
+
+	s.logger.Info("remna nodes synced", slog.Int("count", len(nodes)))
+	return mapNodes(nodes), nil
+}
+
+func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []repository.Node {
+	sort.SliceStable(remnaNodes, func(i, j int) bool {
+		if remnaNodes[i].ViewPosition != remnaNodes[j].ViewPosition {
+			return remnaNodes[i].ViewPosition < remnaNodes[j].ViewPosition
+		}
+		return strings.ToLower(remnaNodes[i].Name) < strings.ToLower(remnaNodes[j].Name)
+	})
+
+	proxyPort := syncConfig.ProxyPort
+	if proxyPort <= 0 {
+		proxyPort = 1443
+	}
+	excludedNames := makeStringSet(syncConfig.ExcludeNames)
+
+	countryCounts := make(map[string]int)
+	nodes := make([]repository.Node, 0, len(remnaNodes))
+	defaultAssigned := false
+
+	for _, item := range remnaNodes {
+		if _, excluded := excludedNames[strings.ToLower(strings.TrimSpace(item.Name))]; excluded {
+			continue
+		}
+
+		host := strings.TrimSpace(item.Address)
+		if host == "" {
+			continue
+		}
+
+		country := strings.ToUpper(strings.TrimSpace(item.CountryCode))
+		if country == "" {
+			country = "UN"
+		}
+		countryCounts[country]++
+		id := fmt.Sprintf("%s-%d", strings.ToLower(country), countryCounts[country])
+		online := item.IsConnected && !item.IsDisabled
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = countryName(country)
+		}
+
+		node := repository.Node{
+			ID:          id,
+			Name:        name,
+			Country:     country,
+			City:        countryName(country),
+			Host:        host,
+			ProxyPort:   proxyPort,
+			ProxyScheme: "https",
+			SupportsPAC: true,
+			Status:      ternary(online, "online", "offline"),
+			LatencyMS:   0,
+			IsDefault:   online && !defaultAssigned,
+		}
+		if node.IsDefault {
+			defaultAssigned = true
+		}
+		nodes = append(nodes, node)
+	}
+
+	return nodes
+}
+
+func makeStringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			set[value] = struct{}{}
+		}
+	}
+	return set
+}
+
+func countryName(code string) string {
+	names := map[string]string{
+		"DE": "Germany",
+		"FI": "Finland",
+		"LT": "Lithuania",
+		"NL": "Netherlands",
+		"PL": "Poland",
+		"RU": "Russia",
+		"US": "United States",
+	}
+	if name, ok := names[strings.ToUpper(code)]; ok {
+		return name
+	}
+	return strings.ToUpper(code)
+}
+
+func ternary[T any](condition bool, left T, right T) T {
+	if condition {
+		return left
+	}
+	return right
 }
 
 func (s *Service) ValidateProxyCredentials(ctx context.Context, username, password string) (bool, error) {

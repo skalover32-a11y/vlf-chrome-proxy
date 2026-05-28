@@ -169,6 +169,7 @@ func newTestHandler(t *testing.T) (http.Handler, string) {
 		"https://access.example.com",
 		"local_only",
 		nil,
+		service.RemnaNodeSyncConfig{ProxyPort: 1443},
 		[]string{"2ip.ru"},
 		false,
 	)

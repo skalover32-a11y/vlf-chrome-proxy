@@ -44,6 +44,7 @@ func (s *Server) Handler() http.Handler {
 	router.Route("/internal", func(r chi.Router) {
 		r.Use(s.requireNodeToken)
 		r.Post("/nodes/register", s.handleNodeRegister)
+		r.Post("/nodes/sync-remna", s.handleNodeSyncRemna)
 		r.Post("/proxy/validate-credentials", s.handleProxyValidateCredentials)
 	})
 
@@ -172,6 +173,15 @@ func (s *Server) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "node": node})
+}
+
+func (s *Server) handleNodeSyncRemna(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.service.SyncNodesFromRemna(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "nodes": nodes})
 }
 
 func (s *Server) handleProxyValidateCredentials(w http.ResponseWriter, r *http.Request) {

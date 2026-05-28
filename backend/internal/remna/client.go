@@ -26,6 +26,18 @@ type Subscription struct {
 	SubscriptionURL string
 }
 
+type Node struct {
+	UUID         string
+	Name         string
+	Address      string
+	CountryCode  string
+	IsConnected  bool
+	IsDisabled   bool
+	IsConnecting bool
+	ViewPosition int
+	Tags         []string
+}
+
 var (
 	ErrNotFound     = errors.New("remna subscription not found")
 	ErrUnauthorized = errors.New("remna api unauthorized")
@@ -60,6 +72,58 @@ func (c *Client) GetSubscriptionByShortUUID(ctx context.Context, shortUUID strin
 	}
 
 	return c.getSubscription(ctx, "/api/sub/"+url.PathEscape(shortUUID)+"/info", c.apiToken != "")
+}
+
+func (c *Client) ListNodes(ctx context.Context) ([]Node, error) {
+	if c.apiToken == "" {
+		return nil, ErrUnauthorized
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/nodes", nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+c.apiToken)
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer response.Body.Close()
+
+	switch response.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, ErrUnauthorized
+	default:
+		if response.StatusCode >= 500 {
+			return nil, ErrUnavailable
+		}
+		return nil, fmt.Errorf("remna api unexpected status: %d", response.StatusCode)
+	}
+
+	var payload nodesEnvelope
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode remna nodes response: %w", err)
+	}
+
+	nodes := make([]Node, 0, len(payload.Response))
+	for _, item := range payload.Response {
+		nodes = append(nodes, Node{
+			UUID:         strings.TrimSpace(item.UUID),
+			Name:         strings.TrimSpace(item.Name),
+			Address:      strings.TrimSpace(item.Address),
+			CountryCode:  strings.ToUpper(strings.TrimSpace(item.CountryCode)),
+			IsConnected:  item.IsConnected,
+			IsDisabled:   item.IsDisabled,
+			IsConnecting: item.IsConnecting,
+			ViewPosition: item.ViewPosition,
+			Tags:         append([]string(nil), item.Tags...),
+		})
+	}
+
+	return nodes, nil
 }
 
 func (c *Client) getSubscription(ctx context.Context, path string, withAuth bool) (*Subscription, error) {
@@ -109,6 +173,22 @@ type subscriptionEnvelope struct {
 	IsFound  *bool                `json:"isFound"`
 	User     *subscriptionUser    `json:"user"`
 	URL      string               `json:"subscriptionUrl"`
+}
+
+type nodesEnvelope struct {
+	Response []nodePayload `json:"response"`
+}
+
+type nodePayload struct {
+	UUID         string   `json:"uuid"`
+	Name         string   `json:"name"`
+	Address      string   `json:"address"`
+	CountryCode  string   `json:"countryCode"`
+	IsConnected  bool     `json:"isConnected"`
+	IsDisabled   bool     `json:"isDisabled"`
+	IsConnecting bool     `json:"isConnecting"`
+	ViewPosition int      `json:"viewPosition"`
+	Tags         []string `json:"tags"`
 }
 
 func (e subscriptionEnvelope) subscription() *subscriptionPayload {

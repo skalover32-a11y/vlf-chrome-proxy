@@ -20,6 +20,7 @@ func main() {
 		log.Fatalf("start runtime: %v", err)
 	}
 	defer runtime.Close()
+	runtime.StartBackground(ctx)
 
 	server := &http.Server{
 		Addr:    runtime.Config.HTTPListenAddr,

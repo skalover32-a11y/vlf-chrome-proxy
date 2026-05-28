@@ -91,6 +91,36 @@ It then checks Remnawave:
 
 The expected Remnawave response contains `isFound`, `user.shortUuid`, `user.isActive`, `user.userStatus`, and `user.expiresAt`. A subscription is accepted only when it is found, active, not disabled/revoked, and not expired.
 
+### Remnawave Node Sync
+
+The central backend can sync browser proxy nodes from Remnawave `GET /api/nodes`.
+
+Enable it on the central node:
+
+```env
+REMNA_NODE_SYNC_ENABLED=true
+REMNA_NODE_SYNC_INTERVAL_SECONDS=300
+REMNA_NODE_PROXY_PORT=1443
+REMNA_NODE_SYNC_EXCLUDE_NAMES=Whitelist
+```
+
+Mapping rules:
+
+- Remnawave `address` becomes the browser proxy `host`.
+- `REMNA_NODE_PROXY_PORT` becomes the browser HTTPS proxy port for every synced node.
+- `isConnected=true` and `isDisabled=false` becomes `status=online`; otherwise the node is synced as `offline`.
+- Node IDs are deterministic by country and order, for example `fi-1`, `de-1`, `pl-1`.
+- Names listed in `REMNA_NODE_SYNC_EXCLUDE_NAMES` are skipped so service nodes like `Whitelist` do not appear in the extension.
+
+Important: Remnawave nodes must also run the VLF HTTPS proxy on `REMNA_NODE_PROXY_PORT`, or that node will appear in the extension but browser traffic will not connect.
+
+Manual sync endpoint:
+
+```bash
+curl -X POST https://api.example.com/internal/nodes/sync-remna \
+  -H "Authorization: Bearer $NODE_REGISTRATION_TOKEN"
+```
+
 ## Data Model
 
 The access/session model keeps local access links for tests, but browser sessions can now point to an external Remnawave subscription.
@@ -140,7 +170,7 @@ For HTTPS proxy nodes, `proxy_scheme` must be `https`; default public port is `1
 
 ## Multi-Node And Routing
 
-Nodes are configured in `deploy/runtime/nodes.json`. `/browser/exchange-link` and `/browser/session` return the full available `nodes[]` array and `default_node_id`. The extension stores `selected_node_id`; `/browser/proxy-config` and `/browser/pac-config` take `node_id` so switching servers does not change the session model.
+Nodes are configured from `deploy/runtime/nodes.json`, proxy-node self-registration, or optional Remnawave node sync. `/browser/exchange-link` and `/browser/session` return the full available `nodes[]` array and `default_node_id`. The extension stores `selected_node_id`; `/browser/proxy-config` and `/browser/pac-config` take `node_id` so switching servers does not change the session model.
 
 For automatic multi-node deployment without a shared database, run one central backend and any number of proxy-only nodes:
 

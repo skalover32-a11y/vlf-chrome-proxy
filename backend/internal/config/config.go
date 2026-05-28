@@ -36,6 +36,10 @@ type Config struct {
 	RemnaAPIToken                   string
 	RemnaTimeout                    time.Duration
 	RemnaAllowInsecureTLS           bool
+	RemnaNodeSyncEnabled            bool
+	RemnaNodeSyncInterval           time.Duration
+	RemnaNodeProxyPort              int
+	RemnaNodeSyncExcludeNames       []string
 	SmartRoutingProxyDomains        []string
 	ProxyAllowPrivateDestinations   bool
 	ProxyEnableIPv6                 bool
@@ -79,6 +83,10 @@ func Load() (Config, error) {
 		RemnaAPIToken:                   strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
 		RemnaTimeout:                    secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
 		RemnaAllowInsecureTLS:           boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
+		RemnaNodeSyncEnabled:            boolEnv("REMNA_NODE_SYNC_ENABLED", false),
+		RemnaNodeSyncInterval:           secondsDurationEnv("REMNA_NODE_SYNC_INTERVAL_SECONDS", 5*time.Minute),
+		RemnaNodeProxyPort:              intEnv("REMNA_NODE_PROXY_PORT", 1443),
+		RemnaNodeSyncExcludeNames:       csv(env("REMNA_NODE_SYNC_EXCLUDE_NAMES", "Whitelist")),
 		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "")),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
 		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/config"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/logging"
@@ -65,6 +66,10 @@ func New(ctx context.Context) (*Runtime, error) {
 		cfg.AccessLinkBaseURL,
 		cfg.AccessSourceMode,
 		remnaClient,
+		service.RemnaNodeSyncConfig{
+			ProxyPort:    cfg.RemnaNodeProxyPort,
+			ExcludeNames: cfg.RemnaNodeSyncExcludeNames,
+		},
 		cfg.SmartRoutingProxyDomains,
 		cfg.ProxyAllowPrivateDestinations,
 	)
@@ -76,6 +81,41 @@ func New(ctx context.Context) (*Runtime, error) {
 		Repo:    repo,
 		Service: svc,
 	}, nil
+}
+
+func (r *Runtime) StartBackground(ctx context.Context) {
+	if !r.Config.RemnaNodeSyncEnabled {
+		return
+	}
+
+	go func() {
+		r.syncRemnaNodes(ctx)
+
+		interval := r.Config.RemnaNodeSyncInterval
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				r.syncRemnaNodes(ctx)
+			}
+		}
+	}()
+}
+
+func (r *Runtime) syncRemnaNodes(ctx context.Context) {
+	nodes, err := r.Service.SyncNodesFromRemna(ctx)
+	if err != nil {
+		r.Logger.Warn("remna node sync failed", slog.Any("error", err))
+		return
+	}
+	r.Logger.Info("remna node sync completed", slog.Int("count", len(nodes)))
 }
 
 func (r *Runtime) Close() error {
