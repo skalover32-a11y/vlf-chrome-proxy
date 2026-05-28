@@ -69,6 +69,7 @@ func New(ctx context.Context) (*Runtime, error) {
 		service.RemnaNodeSyncConfig{
 			ProxyPort:    cfg.RemnaNodeProxyPort,
 			ExcludeNames: cfg.RemnaNodeSyncExcludeNames,
+			RequireTag:   cfg.RemnaNodeSyncRequireTag,
 		},
 		cfg.SmartRoutingProxyDomains,
 		cfg.ProxyAllowPrivateDestinations,

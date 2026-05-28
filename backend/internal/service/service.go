@@ -107,6 +107,7 @@ type RegisterNodeRequest struct {
 type RemnaNodeSyncConfig struct {
 	ProxyPort    int
 	ExcludeNames []string
+	RequireTag   string
 }
 
 type ValidateProxyCredentialsRequest struct {
@@ -646,6 +647,7 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 		proxyPort = 1443
 	}
 	excludedNames := makeStringSet(syncConfig.ExcludeNames)
+	requiredTag := strings.ToLower(strings.TrimSpace(syncConfig.RequireTag))
 
 	countryCounts := make(map[string]int)
 	nodes := make([]repository.Node, 0, len(remnaNodes))
@@ -653,6 +655,12 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 
 	for _, item := range remnaNodes {
 		if _, excluded := excludedNames[strings.ToLower(strings.TrimSpace(item.Name))]; excluded {
+			continue
+		}
+		if item.IsDisabled || !item.IsConnected {
+			continue
+		}
+		if requiredTag != "" && !remnaNodeHasMarker(item, requiredTag) {
 			continue
 		}
 
@@ -667,7 +675,6 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 		}
 		countryCounts[country]++
 		id := fmt.Sprintf("%s-%d", strings.ToLower(country), countryCounts[country])
-		online := item.IsConnected && !item.IsDisabled
 		name := strings.TrimSpace(item.Name)
 		if name == "" {
 			name = countryName(country)
@@ -682,9 +689,9 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 			ProxyPort:   proxyPort,
 			ProxyScheme: "https",
 			SupportsPAC: true,
-			Status:      ternary(online, "online", "offline"),
+			Status:      "online",
 			LatencyMS:   0,
-			IsDefault:   online && !defaultAssigned,
+			IsDefault:   !defaultAssigned,
 		}
 		if node.IsDefault {
 			defaultAssigned = true
@@ -693,6 +700,22 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 	}
 
 	return nodes
+}
+
+func remnaNodeHasMarker(node remna.Node, marker string) bool {
+	marker = strings.ToLower(strings.TrimSpace(marker))
+	if marker == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(node.Name), marker) {
+		return true
+	}
+	for _, tag := range node.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), marker) || strings.Contains(strings.ToLower(tag), marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func makeStringSet(values []string) map[string]struct{} {
@@ -720,13 +743,6 @@ func countryName(code string) string {
 		return name
 	}
 	return strings.ToUpper(code)
-}
-
-func ternary[T any](condition bool, left T, right T) T {
-	if condition {
-		return left
-	}
-	return right
 }
 
 func (s *Service) ValidateProxyCredentials(ctx context.Context, username, password string) (bool, error) {

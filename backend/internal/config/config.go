@@ -40,6 +40,7 @@ type Config struct {
 	RemnaNodeSyncInterval           time.Duration
 	RemnaNodeProxyPort              int
 	RemnaNodeSyncExcludeNames       []string
+	RemnaNodeSyncRequireTag         string
 	SmartRoutingProxyDomains        []string
 	ProxyAllowPrivateDestinations   bool
 	ProxyEnableIPv6                 bool
@@ -87,6 +88,7 @@ func Load() (Config, error) {
 		RemnaNodeSyncInterval:           secondsDurationEnv("REMNA_NODE_SYNC_INTERVAL_SECONDS", 5*time.Minute),
 		RemnaNodeProxyPort:              intEnv("REMNA_NODE_PROXY_PORT", 1443),
 		RemnaNodeSyncExcludeNames:       csv(env("REMNA_NODE_SYNC_EXCLUDE_NAMES", "Whitelist")),
+		RemnaNodeSyncRequireTag:         strings.TrimSpace(env("REMNA_NODE_SYNC_REQUIRE_TAG", "OUT")),
 		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "")),
 		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
 		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),

@@ -102,6 +102,7 @@ REMNA_NODE_SYNC_ENABLED=true
 REMNA_NODE_SYNC_INTERVAL_SECONDS=300
 REMNA_NODE_PROXY_PORT=1443
 REMNA_NODE_SYNC_EXCLUDE_NAMES=Whitelist
+REMNA_NODE_SYNC_REQUIRE_TAG=OUT
 ```
 
 Mapping rules:
@@ -109,6 +110,8 @@ Mapping rules:
 - Remnawave `address` becomes the browser proxy `host`.
 - `REMNA_NODE_PROXY_PORT` becomes the browser HTTPS proxy port for every synced node.
 - `isConnected=true` and `isDisabled=false` becomes `status=online`; otherwise the node is synced as `offline`.
+- Disabled or disconnected Remnawave nodes are skipped.
+- `REMNA_NODE_SYNC_REQUIRE_TAG=OUT` means only nodes with `OUT` in name or tags are synced.
 - Node IDs are deterministic by country and order, for example `fi-1`, `de-1`, `pl-1`.
 - Names listed in `REMNA_NODE_SYNC_EXCLUDE_NAMES` are skipped so service nodes like `Whitelist` do not appear in the extension.
 
