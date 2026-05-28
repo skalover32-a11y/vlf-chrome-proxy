@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,9 +107,12 @@ type RegisterNodeRequest struct {
 }
 
 type RemnaNodeSyncConfig struct {
-	ProxyPort    int
-	ExcludeNames []string
-	RequireTag   string
+	ProxyPort             int
+	ExcludeNames          []string
+	RequireTag            string
+	RequireProxyAlive     bool
+	ProxyCheckTimeout     time.Duration
+	AllowInsecureProxyTLS bool
 }
 
 type ValidateProxyCredentialsRequest struct {
@@ -618,13 +623,21 @@ func (s *Service) SyncNodesFromRemna(ctx context.Context) ([]AccessNode, error) 
 	}
 
 	nodes := mapRemnaNodes(remnaNodes, s.remnaNodeSync)
+	if s.remnaNodeSync.RequireProxyAlive {
+		before := len(nodes)
+		nodes = filterChromeCompatibleProxyNodes(ctx, nodes, s.remnaNodeSync)
+		if skipped := before - len(nodes); skipped > 0 {
+			s.logger.Warn("remna nodes skipped because https proxy is not reachable or tls is invalid", slog.Int("skipped", skipped))
+		}
+	}
 	if len(nodes) == 0 {
 		return nil, &AppError{
 			Code:    "no_nodes_available",
-			Message: "Remna did not return any usable nodes.",
+			Message: "Remna did not return any usable proxy nodes.",
 			Status:  503,
 		}
 	}
+	assignDefaultNode(nodes)
 
 	if err := s.repo.SyncNodes(ctx, nodes); err != nil {
 		return nil, fmt.Errorf("sync remna nodes: %w", err)
@@ -651,7 +664,6 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 
 	countryCounts := make(map[string]int)
 	nodes := make([]repository.Node, 0, len(remnaNodes))
-	defaultAssigned := false
 
 	for _, item := range remnaNodes {
 		if _, excluded := excludedNames[strings.ToLower(strings.TrimSpace(item.Name))]; excluded {
@@ -691,15 +703,60 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 			SupportsPAC: true,
 			Status:      "online",
 			LatencyMS:   0,
-			IsDefault:   !defaultAssigned,
-		}
-		if node.IsDefault {
-			defaultAssigned = true
 		}
 		nodes = append(nodes, node)
 	}
 
+	assignDefaultNode(nodes)
 	return nodes
+}
+
+func filterChromeCompatibleProxyNodes(ctx context.Context, nodes []repository.Node, syncConfig RemnaNodeSyncConfig) []repository.Node {
+	timeout := syncConfig.ProxyCheckTimeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	filtered := make([]repository.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if ctx.Err() != nil {
+			return filtered
+		}
+		if chromeCompatibleProxyEndpoint(node.Host, node.ProxyPort, timeout, syncConfig.AllowInsecureProxyTLS) {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
+}
+
+func chromeCompatibleProxyEndpoint(host string, port int, timeout time.Duration, allowInsecureTLS bool) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || port <= 0 {
+		return false
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	dialer := &net.Dialer{Timeout: timeout}
+	tlsConfig := &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: allowInsecureTLS, //nolint:gosec // Explicit Remnawave node sync dev switch.
+	}
+	conn, err := tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func assignDefaultNode(nodes []repository.Node) {
+	defaultAssigned := false
+	for idx := range nodes {
+		nodes[idx].IsDefault = false
+		if !defaultAssigned && strings.EqualFold(nodes[idx].Status, "online") {
+			nodes[idx].IsDefault = true
+			defaultAssigned = true
+		}
+	}
 }
 
 func remnaNodeHasMarker(node remna.Node, marker string) bool {

@@ -103,6 +103,9 @@ REMNA_NODE_SYNC_INTERVAL_SECONDS=300
 REMNA_NODE_PROXY_PORT=1443
 REMNA_NODE_SYNC_EXCLUDE_NAMES=Whitelist
 REMNA_NODE_SYNC_REQUIRE_TAG=OUT
+REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE=true
+REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS=3
+REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS=false
 ```
 
 Mapping rules:
@@ -114,8 +117,10 @@ Mapping rules:
 - `REMNA_NODE_SYNC_REQUIRE_TAG=OUT` means only nodes with `OUT` in name or tags are synced.
 - Node IDs are deterministic by country and order, for example `fi-1`, `de-1`, `pl-1`.
 - Names listed in `REMNA_NODE_SYNC_EXCLUDE_NAMES` are skipped so service nodes like `Whitelist` do not appear in the extension.
+- `REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE=true` requires a successful TLS check to `address:REMNA_NODE_PROXY_PORT` before the node is kept online.
+- `REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS=false` keeps the check Chrome-compatible: the proxy certificate must be trusted and match the Remnawave `address` hostname. Use `true` only for temporary lab smoke tests.
 
-Important: Remnawave nodes must also run the VLF HTTPS proxy on `REMNA_NODE_PROXY_PORT`, or that node will appear in the extension but browser traffic will not connect.
+Important: Remnawave nodes must also run the VLF HTTPS proxy on `REMNA_NODE_PROXY_PORT`. With the default alive check, new servers where the proxy-node role has not been installed are skipped automatically. If Remnawave stores an IP address but the proxy certificate is issued for a DNS name, the node is skipped because Chrome would reject it too; set the Remnawave node address to the same DNS name used by `PROXY_PUBLIC_HOST`.
 
 Manual sync endpoint:
 
@@ -228,6 +233,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/skalover32-a11y/vlf-chro
 If required values are missing, the installer asks for the install role and writes answers to `.env`. For `central`, it asks for the backend port and generates `NODE_REGISTRATION_TOKEN` automatically. Copy that token from `/opt/vlf-chrome-proxy/.env` and use it on proxy nodes. For a fresh `proxy_node`, it always asks for `CENTRAL_BACKEND_URL`, `NODE_REGISTRATION_TOKEN`, node id/name/country/city, `PROXY_PUBLIC_HOST`, and `PROXY_PUBLIC_PORT` instead of silently accepting template defaults.
 
 For proxy nodes, the installer tries to issue a trusted Let's Encrypt certificate for `PROXY_PUBLIC_HOST` before starting `https-proxy`. Keep DNS pointed to the proxy node and leave port `80/tcp` free for ACME HTTP validation. The installed certificate is copied to `deploy/runtime/tls/proxy.crt` and `deploy/runtime/tls/proxy.key`; a certbot renewal hook refreshes these files and restarts `https-proxy`. If Let's Encrypt fails, the installer stops by default because Chrome rejects self-signed HTTPS proxy certificates with `ERR_PROXY_CERTIFICATE_INVALID`. Use `ALLOW_SELF_SIGNED_PROXY_CERT=true` only for local smoke tests.
+
+After Docker Compose starts, the installer now verifies that the expected container is running. For proxy nodes it also performs a local TLS check against `127.0.0.1:HTTPS_PROXY_PORT` using `PROXY_PUBLIC_HOST` as SNI/hostname, so missing containers, missing cert files, and certificates Chrome would reject fail the install immediately instead of producing a broken node in the extension.
 
 After the proxy node starts, it appears in extension `nodes[]` after session revalidation or popup reopen.
 
@@ -412,6 +419,7 @@ What the installer does:
 - pulls prebuilt Docker images and starts only the services required by `NODE_ROLE`
 - can still build locally when `BUILD_ON_SERVER=true`
 - removes old compose orphan containers
+- verifies required containers and local health/TLS checks before reporting success
 - optionally creates a bootstrap access link
 - prints compose status
 
@@ -425,6 +433,11 @@ What the installer does:
 - `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
 - `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
+- `REMNA_NODE_SYNC_ENABLED`: enable periodic node sync from Remnawave on the central backend, default `false`
+- `REMNA_NODE_SYNC_REQUIRE_TAG`: required marker in Remnawave node name/tags, default `OUT`
+- `REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE`: skip Remnawave nodes unless the VLF HTTPS proxy answers with valid TLS, default `true`
+- `REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS`: per-node proxy TLS check timeout, default `3`
+- `REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS`: dev-only bypass for proxy-node TLS verification during sync, default `false`
 - `SMART_ROUTING_PROXY_DOMAINS`: optional comma-separated server-side domains always routed through proxy in PAC mode. Default is empty; do not put IP-check domains like `2ip.ru` here unless you intentionally want them proxied.
 - `NODE_ROLE`: `all_in_one`, `central`, or `proxy_node`; default `all_in_one`
 - `CENTRAL_BACKEND_URL`: central backend URL used by proxy-only nodes

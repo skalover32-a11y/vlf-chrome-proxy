@@ -13,46 +13,49 @@ import (
 )
 
 type Config struct {
-	AppEnv                          string
-	LogLevel                        string
-	HTTPListenAddr                  string
-	HTTPSProxyListenAddr            string
-	HTTPSProxyTLSCertPath           string
-	HTTPSProxyTLSKeyPath            string
-	SQLitePath                      string
-	NodeConfigPath                  string
-	TokenPepper                     string
-	ProxyPasswordPepper             string
-	SessionTTL                      time.Duration
-	SessionRefreshGrace             time.Duration
-	ProxyCredentialTTL              time.Duration
-	DefaultBypassList               []string
-	CORSAllowedOrigins              []string
-	CORSAllowChromeExtensionOrigins bool
-	AllowedChromeExtensionIDs       []string
-	AccessLinkBaseURL               string
-	AccessSourceMode                string
-	RemnaAPIBaseURL                 string
-	RemnaAPIToken                   string
-	RemnaTimeout                    time.Duration
-	RemnaAllowInsecureTLS           bool
-	RemnaNodeSyncEnabled            bool
-	RemnaNodeSyncInterval           time.Duration
-	RemnaNodeProxyPort              int
-	RemnaNodeSyncExcludeNames       []string
-	RemnaNodeSyncRequireTag         string
-	SmartRoutingProxyDomains        []string
-	ProxyAllowPrivateDestinations   bool
-	ProxyEnableIPv6                 bool
-	NodeRole                        string
-	CentralBackendURL               string
-	NodeRegistrationToken           string
-	NodeDefaultID                   string
-	NodeDefaultName                 string
-	NodeDefaultCountry              string
-	NodeDefaultCity                 string
-	ProxyPublicHost                 string
-	ProxyPublicPort                 int
+	AppEnv                             string
+	LogLevel                           string
+	HTTPListenAddr                     string
+	HTTPSProxyListenAddr               string
+	HTTPSProxyTLSCertPath              string
+	HTTPSProxyTLSKeyPath               string
+	SQLitePath                         string
+	NodeConfigPath                     string
+	TokenPepper                        string
+	ProxyPasswordPepper                string
+	SessionTTL                         time.Duration
+	SessionRefreshGrace                time.Duration
+	ProxyCredentialTTL                 time.Duration
+	DefaultBypassList                  []string
+	CORSAllowedOrigins                 []string
+	CORSAllowChromeExtensionOrigins    bool
+	AllowedChromeExtensionIDs          []string
+	AccessLinkBaseURL                  string
+	AccessSourceMode                   string
+	RemnaAPIBaseURL                    string
+	RemnaAPIToken                      string
+	RemnaTimeout                       time.Duration
+	RemnaAllowInsecureTLS              bool
+	RemnaNodeSyncEnabled               bool
+	RemnaNodeSyncInterval              time.Duration
+	RemnaNodeProxyPort                 int
+	RemnaNodeSyncExcludeNames          []string
+	RemnaNodeSyncRequireTag            string
+	RemnaNodeSyncRequireProxyAlive     bool
+	RemnaNodeSyncProxyCheckTimeout     time.Duration
+	RemnaNodeSyncAllowInsecureProxyTLS bool
+	SmartRoutingProxyDomains           []string
+	ProxyAllowPrivateDestinations      bool
+	ProxyEnableIPv6                    bool
+	NodeRole                           string
+	CentralBackendURL                  string
+	NodeRegistrationToken              string
+	NodeDefaultID                      string
+	NodeDefaultName                    string
+	NodeDefaultCountry                 string
+	NodeDefaultCity                    string
+	ProxyPublicHost                    string
+	ProxyPublicPort                    int
 }
 
 func Load() (Config, error) {
@@ -71,36 +74,39 @@ func Load() (Config, error) {
 		ProxyPasswordPepper: strings.TrimSpace(
 			os.Getenv("PROXY_PASSWORD_PEPPER"),
 		),
-		SessionTTL:                      durationEnv("SESSION_TTL_HOURS", 24*time.Hour),
-		SessionRefreshGrace:             durationEnv("SESSION_REFRESH_GRACE_HOURS", 7*24*time.Hour),
-		ProxyCredentialTTL:              durationEnv("PROXY_CREDENTIAL_TTL_HOURS", 24*time.Hour),
-		DefaultBypassList:               csv(env("DEFAULT_BYPASS_LIST", "<local>,127.0.0.1")),
-		CORSAllowedOrigins:              csv(os.Getenv("CORS_ALLOWED_ORIGINS")),
-		CORSAllowChromeExtensionOrigins: boolEnv("CORS_ALLOW_CHROME_EXTENSION_ORIGINS", true),
-		AllowedChromeExtensionIDs:       csv(os.Getenv("ALLOWED_CHROME_EXTENSION_IDS")),
-		AccessLinkBaseURL:               strings.TrimRight(env("ACCESS_LINK_BASE_URL", "https://example.com"), "/"),
-		AccessSourceMode:                env("ACCESS_SOURCE_MODE", "local_only"),
-		RemnaAPIBaseURL:                 strings.TrimRight(env("REMNA_API_BASE_URL", ""), "/"),
-		RemnaAPIToken:                   strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
-		RemnaTimeout:                    secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
-		RemnaAllowInsecureTLS:           boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
-		RemnaNodeSyncEnabled:            boolEnv("REMNA_NODE_SYNC_ENABLED", false),
-		RemnaNodeSyncInterval:           secondsDurationEnv("REMNA_NODE_SYNC_INTERVAL_SECONDS", 5*time.Minute),
-		RemnaNodeProxyPort:              intEnv("REMNA_NODE_PROXY_PORT", 1443),
-		RemnaNodeSyncExcludeNames:       csv(env("REMNA_NODE_SYNC_EXCLUDE_NAMES", "Whitelist")),
-		RemnaNodeSyncRequireTag:         strings.TrimSpace(env("REMNA_NODE_SYNC_REQUIRE_TAG", "OUT")),
-		SmartRoutingProxyDomains:        csv(env("SMART_ROUTING_PROXY_DOMAINS", "")),
-		ProxyAllowPrivateDestinations:   boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
-		ProxyEnableIPv6:                 boolEnv("PROXY_ENABLE_IPV6", false),
-		NodeRole:                        env("NODE_ROLE", "all_in_one"),
-		CentralBackendURL:               strings.TrimRight(env("CENTRAL_BACKEND_URL", ""), "/"),
-		NodeRegistrationToken:           strings.TrimSpace(os.Getenv("NODE_REGISTRATION_TOKEN")),
-		NodeDefaultID:                   env("NODE_DEFAULT_ID", "node-1"),
-		NodeDefaultName:                 env("NODE_DEFAULT_NAME", "Finland #1"),
-		NodeDefaultCountry:              env("NODE_DEFAULT_COUNTRY", "FI"),
-		NodeDefaultCity:                 env("NODE_DEFAULT_CITY", "Helsinki"),
-		ProxyPublicHost:                 env("PROXY_PUBLIC_HOST", "proxy.example.com"),
-		ProxyPublicPort:                 intEnv("PROXY_PUBLIC_PORT", 1443),
+		SessionTTL:                         durationEnv("SESSION_TTL_HOURS", 24*time.Hour),
+		SessionRefreshGrace:                durationEnv("SESSION_REFRESH_GRACE_HOURS", 7*24*time.Hour),
+		ProxyCredentialTTL:                 durationEnv("PROXY_CREDENTIAL_TTL_HOURS", 24*time.Hour),
+		DefaultBypassList:                  csv(env("DEFAULT_BYPASS_LIST", "<local>,127.0.0.1")),
+		CORSAllowedOrigins:                 csv(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		CORSAllowChromeExtensionOrigins:    boolEnv("CORS_ALLOW_CHROME_EXTENSION_ORIGINS", true),
+		AllowedChromeExtensionIDs:          csv(os.Getenv("ALLOWED_CHROME_EXTENSION_IDS")),
+		AccessLinkBaseURL:                  strings.TrimRight(env("ACCESS_LINK_BASE_URL", "https://example.com"), "/"),
+		AccessSourceMode:                   env("ACCESS_SOURCE_MODE", "local_only"),
+		RemnaAPIBaseURL:                    strings.TrimRight(env("REMNA_API_BASE_URL", ""), "/"),
+		RemnaAPIToken:                      strings.TrimSpace(os.Getenv("REMNA_API_TOKEN")),
+		RemnaTimeout:                       secondsDurationEnv("REMNA_TIMEOUT_SECONDS", 10*time.Second),
+		RemnaAllowInsecureTLS:              boolEnv("REMNA_ALLOW_INSECURE_TLS", false),
+		RemnaNodeSyncEnabled:               boolEnv("REMNA_NODE_SYNC_ENABLED", false),
+		RemnaNodeSyncInterval:              secondsDurationEnv("REMNA_NODE_SYNC_INTERVAL_SECONDS", 5*time.Minute),
+		RemnaNodeProxyPort:                 intEnv("REMNA_NODE_PROXY_PORT", 1443),
+		RemnaNodeSyncExcludeNames:          csv(env("REMNA_NODE_SYNC_EXCLUDE_NAMES", "Whitelist")),
+		RemnaNodeSyncRequireTag:            strings.TrimSpace(env("REMNA_NODE_SYNC_REQUIRE_TAG", "OUT")),
+		RemnaNodeSyncRequireProxyAlive:     boolEnv("REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE", true),
+		RemnaNodeSyncProxyCheckTimeout:     secondsDurationEnv("REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS", 3*time.Second),
+		RemnaNodeSyncAllowInsecureProxyTLS: boolEnv("REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS", false),
+		SmartRoutingProxyDomains:           csv(env("SMART_ROUTING_PROXY_DOMAINS", "")),
+		ProxyAllowPrivateDestinations:      boolEnv("PROXY_ALLOW_PRIVATE_DESTINATIONS", false),
+		ProxyEnableIPv6:                    boolEnv("PROXY_ENABLE_IPV6", false),
+		NodeRole:                           env("NODE_ROLE", "all_in_one"),
+		CentralBackendURL:                  strings.TrimRight(env("CENTRAL_BACKEND_URL", ""), "/"),
+		NodeRegistrationToken:              strings.TrimSpace(os.Getenv("NODE_REGISTRATION_TOKEN")),
+		NodeDefaultID:                      env("NODE_DEFAULT_ID", "node-1"),
+		NodeDefaultName:                    env("NODE_DEFAULT_NAME", "Finland #1"),
+		NodeDefaultCountry:                 env("NODE_DEFAULT_COUNTRY", "FI"),
+		NodeDefaultCity:                    env("NODE_DEFAULT_CITY", "Helsinki"),
+		ProxyPublicHost:                    env("PROXY_PUBLIC_HOST", "proxy.example.com"),
+		ProxyPublicPort:                    intEnv("PROXY_PUBLIC_PORT", 1443),
 	}
 
 	if cfg.TokenPepper == "" {

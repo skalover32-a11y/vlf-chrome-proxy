@@ -371,6 +371,14 @@ migrate_env_file() {
   ensure_env_value "REMNA_API_TOKEN" ""
   ensure_env_value "REMNA_TIMEOUT_SECONDS" "10"
   ensure_env_value "REMNA_ALLOW_INSECURE_TLS" "false"
+  ensure_env_value "REMNA_NODE_SYNC_ENABLED" "false"
+  ensure_env_value "REMNA_NODE_SYNC_INTERVAL_SECONDS" "300"
+  ensure_env_value "REMNA_NODE_PROXY_PORT" "1443"
+  ensure_env_value "REMNA_NODE_SYNC_EXCLUDE_NAMES" "Whitelist"
+  ensure_env_value "REMNA_NODE_SYNC_REQUIRE_TAG" "OUT"
+  ensure_env_value "REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE" "true"
+  ensure_env_value "REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS" "3"
+  ensure_env_value "REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS" "false"
   ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
@@ -604,6 +612,85 @@ start_stack() {
   esac
 }
 
+verify_container_running() {
+  local service="$1"
+  local cid status
+
+  cid="$(docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy ps -q "$service" || true)"
+  if [ -z "$cid" ]; then
+    echo "Container for service $service was not created." >&2
+    docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy ps || true
+    exit 1
+  fi
+
+  status="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || true)"
+  if [ "$status" != "running" ]; then
+    echo "Container for service $service is not running, current status: ${status:-unknown}" >&2
+    docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 "$service" || true
+    exit 1
+  fi
+}
+
+verify_backend_health() {
+  local port="${BACKEND_PORT:-18080}"
+
+  if ! curl -fsS --max-time 8 "http://127.0.0.1:${port}/healthz" >/dev/null; then
+    echo "Backend health check failed on http://127.0.0.1:${port}/healthz" >&2
+    docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 api || true
+    exit 1
+  fi
+  log "backend health check ok on port $port"
+}
+
+verify_proxy_tls() {
+  local port="${HTTPS_PROXY_PORT:-1443}"
+  local host="${PROXY_PUBLIC_HOST:-localhost}"
+  local output_file
+
+  ensure_openssl
+  output_file="$(mktemp)"
+  if [ "${ALLOW_SELF_SIGNED_PROXY_CERT:-false}" = "true" ]; then
+    if ! timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" </dev/null >"$output_file" 2>&1; then
+      echo "HTTPS proxy TLS smoke check failed on 127.0.0.1:${port}" >&2
+      cat "$output_file" >&2 || true
+      rm -f "$output_file"
+      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 https-proxy || true
+      exit 1
+    fi
+  else
+    if ! timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" -verify_hostname "$host" -verify_return_error </dev/null >"$output_file" 2>&1; then
+      echo "HTTPS proxy TLS verification failed for $host on local port $port." >&2
+      echo "Chrome will reject this proxy until PROXY_PUBLIC_HOST has a trusted matching certificate." >&2
+      cat "$output_file" >&2 || true
+      rm -f "$output_file"
+      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 https-proxy || true
+      exit 1
+    fi
+  fi
+  rm -f "$output_file"
+  log "https proxy TLS check ok for $host on port $port"
+}
+
+verify_stack() {
+  load_env_file
+  case "${NODE_ROLE:-all_in_one}" in
+    proxy_node)
+      verify_container_running "https-proxy"
+      verify_proxy_tls
+      ;;
+    central)
+      verify_container_running "api"
+      verify_backend_health
+      ;;
+    *)
+      verify_container_running "api"
+      verify_container_running "https-proxy"
+      verify_backend_health
+      verify_proxy_tls
+      ;;
+  esac
+}
+
 bootstrap_access_link() {
   load_env_file
 
@@ -640,6 +727,7 @@ main() {
   sync_repo
   prepare_runtime
   start_stack
+  verify_stack
   bootstrap_access_link
   show_status
 }
