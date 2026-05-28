@@ -639,6 +639,9 @@ func (s *Service) SyncNodesFromRemna(ctx context.Context) ([]AccessNode, error) 
 	}
 
 	nodes := mapRemnaNodes(remnaNodes, s.remnaNodeSync)
+	if err := s.applyRegisteredProxyEndpoints(ctx, nodes); err != nil {
+		return nil, err
+	}
 	if s.remnaNodeSync.RequireProxyAlive {
 		before := len(nodes)
 		nodes = filterChromeCompatibleProxyNodes(ctx, nodes, s.remnaNodeSync)
@@ -661,6 +664,42 @@ func (s *Service) SyncNodesFromRemna(ctx context.Context) ([]AccessNode, error) 
 
 	s.logger.Info("remna nodes synced", slog.Int("count", len(nodes)))
 	return mapNodes(nodes), nil
+}
+
+func (s *Service) applyRegisteredProxyEndpoints(ctx context.Context, nodes []repository.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	registeredNodes, err := s.repo.ListNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("list registered nodes: %w", err)
+	}
+	registeredByID := make(map[string]repository.Node, len(registeredNodes))
+	for _, node := range registeredNodes {
+		registeredByID[node.ID] = node
+	}
+
+	for idx := range nodes {
+		registered, ok := registeredByID[nodes[idx].ID]
+		if !ok || !sameNodeIdentity(nodes[idx], registered) || strings.TrimSpace(registered.Host) == "" {
+			continue
+		}
+
+		nodes[idx].Host = registered.Host
+		if registered.ProxyPort > 0 {
+			nodes[idx].ProxyPort = registered.ProxyPort
+		}
+		if strings.TrimSpace(registered.ProxyScheme) != "" {
+			nodes[idx].ProxyScheme = registered.ProxyScheme
+		}
+		nodes[idx].SupportsPAC = registered.SupportsPAC
+	}
+	return nil
+}
+
+func sameNodeIdentity(left repository.Node, right repository.Node) bool {
+	return strings.EqualFold(strings.TrimSpace(left.Country), strings.TrimSpace(right.Country))
 }
 
 func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []repository.Node {

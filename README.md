@@ -120,7 +120,7 @@ Mapping rules:
 - `REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE=true` requires a successful TLS check to `address:REMNA_NODE_PROXY_PORT` before the node is kept online.
 - `REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS=false` keeps the check Chrome-compatible: the proxy certificate must be trusted and match the Remnawave `address` hostname. Use `true` only for temporary lab smoke tests.
 
-Important: Remnawave nodes must also run the VLF HTTPS proxy on `REMNA_NODE_PROXY_PORT`. With the default alive check, new servers where the proxy-node role has not been installed are skipped automatically. If Remnawave stores an IP address but the proxy certificate is issued for a DNS name, the node is skipped because Chrome would reject it too; set the Remnawave node address to the same DNS name used by `PROXY_PUBLIC_HOST`.
+Important: Remnawave nodes must also run the VLF HTTPS proxy on `REMNA_NODE_PROXY_PORT`. With the default alive check, new servers where the proxy-node role has not been installed are skipped automatically. If a proxy node has self-registered with the same deterministic node id/country, the central backend keeps the self-registered `PROXY_PUBLIC_HOST` as the browser proxy endpoint and uses Remnawave only as the access/availability source. This avoids returning Remnawave IP addresses to Chrome when the proxy certificate is issued for a DNS name. If there is no matching registered proxy node yet, Remnawave `address` is checked directly and must have a trusted matching proxy certificate.
 
 Manual sync endpoint:
 
