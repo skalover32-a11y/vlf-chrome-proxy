@@ -591,6 +591,22 @@ func (s *Service) RegisterNode(ctx context.Context, request RegisterNodeRequest)
 	if node.Status == "" {
 		node.Status = "online"
 	}
+	if strings.EqualFold(node.Status, "online") && s.remnaNodeSync.RequireProxyAlive {
+		timeout := s.remnaNodeSync.ProxyCheckTimeout
+		if timeout <= 0 {
+			timeout = 3 * time.Second
+		}
+		if !chromeCompatibleProxyEndpoint(node.Host, node.ProxyPort, timeout, s.remnaNodeSync.AllowInsecureProxyTLS) {
+			s.logger.Warn(
+				"registered proxy node failed chrome-compatible tls check; marking offline",
+				slog.String("node_id", node.ID),
+				slog.String("host", node.Host),
+				slog.Int("port", node.ProxyPort),
+			)
+			node.Status = "offline"
+			node.IsDefault = false
+		}
+	}
 	if err := s.repo.UpsertNodes(ctx, []repository.Node{node}); err != nil {
 		return nil, fmt.Errorf("upsert registered node: %w", err)
 	}
