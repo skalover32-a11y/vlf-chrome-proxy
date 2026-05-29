@@ -108,6 +108,8 @@ REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS=3
 REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS=false
 ```
 
+For `NODE_ROLE=central`, the Ubuntu installer enables `REMNA_NODE_SYNC_ENABLED=true` automatically and asks for `REMNA_NODE_SYNC_INTERVAL_SECONDS` during setup/update. The API performs one sync immediately after startup and then repeats it on that interval, so the manual `POST /internal/nodes/sync-remna` call is only needed for forced troubleshooting.
+
 Mapping rules:
 
 - Remnawave `address` becomes the browser proxy `host`.
@@ -433,7 +435,7 @@ What the installer does:
 - `REMNA_API_TOKEN`: Remnawave API bearer token; keep it secret
 - `REMNA_TIMEOUT_SECONDS`: Remnawave API request timeout, default `10`
 - `REMNA_ALLOW_INSECURE_TLS`: dev-only TLS verification bypass, default `false`
-- `REMNA_NODE_SYNC_ENABLED`: enable periodic node sync from Remnawave on the central backend, default `false`
+- `REMNA_NODE_SYNC_ENABLED`: enable periodic node sync from Remnawave on the central backend. The raw default is `false`, but the Ubuntu installer sets it to `true` for `NODE_ROLE=central`.
 - `REMNA_NODE_SYNC_REQUIRE_TAG`: required marker in Remnawave node name/tags, default `OUT`
 - `REMNA_NODE_SYNC_REQUIRE_PROXY_ALIVE`: skip Remnawave nodes unless the VLF HTTPS proxy answers with valid TLS, default `true`
 - `REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS`: per-node proxy TLS check timeout, default `3`
