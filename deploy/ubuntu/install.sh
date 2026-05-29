@@ -178,7 +178,7 @@ configure_install_mode() {
     central)
       prompt_value "BACKEND_PORT" "Public backend port" "18080" "true"
       set_env_value "REMNA_NODE_SYNC_ENABLED" "true"
-      prompt_value "REMNA_NODE_SYNC_INTERVAL_SECONDS" "Remnawave node sync interval in seconds" "300" "true"
+      prompt_value "REMNA_NODE_SYNC_INTERVAL_SECONDS" "Remnawave node sync interval in seconds" "${REMNA_NODE_SYNC_INTERVAL_SECONDS:-300}" "true" "true"
       if is_placeholder "${NODE_REGISTRATION_TOKEN:-}"; then
         ensure_openssl
         set_env_value "NODE_REGISTRATION_TOKEN" "$(openssl rand -hex 32)"
