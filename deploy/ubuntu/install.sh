@@ -383,6 +383,7 @@ migrate_env_file() {
   ensure_env_value "REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS" "false"
   ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
   ensure_env_value "LETSENCRYPT_EMAIL" ""
+  ensure_env_value "LETSENCRYPT_ACCOUNT" ""
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
   if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
@@ -483,12 +484,32 @@ certbot_account_args=()
 
 prepare_certbot_account_args() {
   local host="${1:-proxy.example.com}"
+  local account="${LETSENCRYPT_ACCOUNT:-}"
   certbot_account_args=()
-  if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
+
+  if [ -z "$account" ]; then
+    account="$(detect_certbot_account_id)"
+  fi
+
+  if [ -n "$account" ]; then
+    certbot_account_args=(--account "$account")
+  elif [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
     certbot_account_args=(--email "$LETSENCRYPT_EMAIL")
   else
     certbot_account_args=(--email "admin@$host")
   fi
+}
+
+detect_certbot_account_id() {
+  local account_dir="/etc/letsencrypt/accounts/acme-v02.api.letsencrypt.org/directory"
+  local first=""
+
+  if [ ! -d "$account_dir" ]; then
+    return 0
+  fi
+
+  first="$(find "$account_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | head -n 1 || true)"
+  printf '%s' "$first"
 }
 
 obtain_letsencrypt_proxy_cert_with_nginx_webroot() {
