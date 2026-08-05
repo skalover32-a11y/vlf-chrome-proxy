@@ -74,6 +74,17 @@ ensure_env_value() {
   fi
 }
 
+ensure_non_empty_env_value() {
+  local key="$1"
+  local value="$2"
+  local current=""
+
+  current="$(grep "^${key}=" "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
+  if [ -z "$current" ]; then
+    set_env_value "$key" "$value"
+  fi
+}
+
 is_placeholder() {
   local value="${1:-}"
   [ -z "$value" ] ||
@@ -384,9 +395,9 @@ migrate_env_file() {
   ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
   ensure_env_value "LETSENCRYPT_EMAIL" ""
   ensure_env_value "LETSENCRYPT_ACCOUNT" ""
-  ensure_env_value "LETSENCRYPT_CONFIG_DIR" "/etc/letsencrypt-vlf-proxy"
-  ensure_env_value "LETSENCRYPT_WORK_DIR" "/var/lib/letsencrypt-vlf-proxy"
-  ensure_env_value "LETSENCRYPT_LOGS_DIR" "/var/log/letsencrypt-vlf-proxy"
+  ensure_non_empty_env_value "LETSENCRYPT_CONFIG_DIR" "/etc/letsencrypt-vlf-proxy"
+  ensure_non_empty_env_value "LETSENCRYPT_WORK_DIR" "/var/lib/letsencrypt-vlf-proxy"
+  ensure_non_empty_env_value "LETSENCRYPT_LOGS_DIR" "/var/log/letsencrypt-vlf-proxy"
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
   if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
