@@ -382,6 +382,7 @@ migrate_env_file() {
   ensure_env_value "REMNA_NODE_SYNC_PROXY_CHECK_TIMEOUT_SECONDS" "3"
   ensure_env_value "REMNA_NODE_SYNC_ALLOW_INSECURE_PROXY_TLS" "false"
   ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
+  ensure_env_value "LETSENCRYPT_EMAIL" ""
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
   if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
@@ -451,6 +452,7 @@ obtain_letsencrypt_proxy_cert() {
     log "PROXY_PUBLIC_HOST is an IP address, skipping Let's Encrypt certificate"
     return 1
   fi
+  prepare_certbot_account_args "$host"
   validate_proxy_dns "$host" || return 1
   if ss -ltn "( sport = :80 )" | tail -n +2 | grep -q .; then
     log "port 80 is already in use, trying nginx webroot certificate flow for $host"
@@ -464,7 +466,7 @@ obtain_letsencrypt_proxy_cert() {
 
   ensure_certbot
   log "requesting Let's Encrypt certificate for $host"
-  if ! certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "$host"; then
+  if ! certbot certonly --standalone --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
     log "Let's Encrypt certificate request failed for $host, falling back to self-signed certificate"
     return 1
   fi
@@ -475,6 +477,18 @@ obtain_letsencrypt_proxy_cert() {
   chmod 600 "$key_path"
   install_renew_hook "$host"
   log "installed trusted Let's Encrypt proxy certificate for $host"
+}
+
+certbot_account_args=()
+
+prepare_certbot_account_args() {
+  local host="${1:-proxy.example.com}"
+  certbot_account_args=()
+  if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
+    certbot_account_args=(--email "$LETSENCRYPT_EMAIL")
+  else
+    certbot_account_args=(--email "admin@$host")
+  fi
 }
 
 obtain_letsencrypt_proxy_cert_with_nginx_webroot() {
@@ -518,7 +532,7 @@ EOF
   fi
 
   log "requesting Let's Encrypt certificate for $host via nginx webroot"
-  if ! certbot certonly --webroot -w "$webroot" --non-interactive --agree-tos --register-unsafely-without-email -d "$host"; then
+  if ! certbot certonly --webroot -w "$webroot" --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
     log "Let's Encrypt webroot certificate request failed for $host"
     return 1
   fi
