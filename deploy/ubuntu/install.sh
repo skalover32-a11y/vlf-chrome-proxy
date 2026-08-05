@@ -384,6 +384,9 @@ migrate_env_file() {
   ensure_env_value "ALLOW_SELF_SIGNED_PROXY_CERT" "false"
   ensure_env_value "LETSENCRYPT_EMAIL" ""
   ensure_env_value "LETSENCRYPT_ACCOUNT" ""
+  ensure_env_value "LETSENCRYPT_CONFIG_DIR" "/etc/letsencrypt-vlf-proxy"
+  ensure_env_value "LETSENCRYPT_WORK_DIR" "/var/lib/letsencrypt-vlf-proxy"
+  ensure_env_value "LETSENCRYPT_LOGS_DIR" "/var/log/letsencrypt-vlf-proxy"
   local current_smart_domains
   current_smart_domains="$(grep '^SMART_ROUTING_PROXY_DOMAINS=' "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2- | tr -d '\"' || true)"
   if [ -z "$current_smart_domains" ] || [ "$current_smart_domains" = "2ip.ru,whatismyipaddress.com,youtube.com,googlevideo.com" ]; then
@@ -453,7 +456,7 @@ obtain_letsencrypt_proxy_cert() {
     log "PROXY_PUBLIC_HOST is an IP address, skipping Let's Encrypt certificate"
     return 1
   fi
-  prepare_certbot_account_args "$host"
+  prepare_certbot_args "$host"
   validate_proxy_dns "$host" || return 1
   if ss -ltn "( sport = :80 )" | tail -n +2 | grep -q .; then
     log "port 80 is already in use, trying nginx webroot certificate flow for $host"
@@ -467,20 +470,45 @@ obtain_letsencrypt_proxy_cert() {
 
   ensure_certbot
   log "requesting Let's Encrypt certificate for $host"
-  if ! certbot certonly --standalone --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
+  if ! certbot "${certbot_storage_args[@]}" certonly --standalone --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
     log "Let's Encrypt certificate request failed for $host, falling back to self-signed certificate"
     return 1
   fi
 
-  cp "/etc/letsencrypt/live/$host/fullchain.pem" "$cert_path"
-  cp "/etc/letsencrypt/live/$host/privkey.pem" "$key_path"
-  chmod 644 "$cert_path"
-  chmod 600 "$key_path"
+  copy_letsencrypt_cert "$host" "$cert_path" "$key_path"
   install_renew_hook "$host"
   log "installed trusted Let's Encrypt proxy certificate for $host"
 }
 
+certbot_storage_args=()
 certbot_account_args=()
+
+prepare_certbot_args() {
+  local host="${1:-proxy.example.com}"
+  prepare_certbot_storage_args
+  prepare_certbot_account_args "$host"
+}
+
+prepare_certbot_storage_args() {
+  local config_dir="${LETSENCRYPT_CONFIG_DIR:-/etc/letsencrypt-vlf-proxy}"
+  local work_dir="${LETSENCRYPT_WORK_DIR:-/var/lib/letsencrypt-vlf-proxy}"
+  local logs_dir="${LETSENCRYPT_LOGS_DIR:-/var/log/letsencrypt-vlf-proxy}"
+
+  mkdir -p "$config_dir" "$work_dir" "$logs_dir"
+  certbot_storage_args=(--config-dir "$config_dir" --work-dir "$work_dir" --logs-dir "$logs_dir")
+}
+
+copy_letsencrypt_cert() {
+  local host="$1"
+  local cert_path="$2"
+  local key_path="$3"
+  local config_dir="${LETSENCRYPT_CONFIG_DIR:-/etc/letsencrypt-vlf-proxy}"
+
+  cp "$config_dir/live/$host/fullchain.pem" "$cert_path"
+  cp "$config_dir/live/$host/privkey.pem" "$key_path"
+  chmod 644 "$cert_path"
+  chmod 600 "$key_path"
+}
 
 prepare_certbot_account_args() {
   local host="${1:-proxy.example.com}"
@@ -501,7 +529,8 @@ prepare_certbot_account_args() {
 }
 
 detect_certbot_account_id() {
-  local account_dir="/etc/letsencrypt/accounts/acme-v02.api.letsencrypt.org/directory"
+  local config_dir="${LETSENCRYPT_CONFIG_DIR:-/etc/letsencrypt-vlf-proxy}"
+  local account_dir="$config_dir/accounts/acme-v02.api.letsencrypt.org/directory"
   local first=""
 
   if [ ! -d "$account_dir" ]; then
@@ -525,6 +554,7 @@ obtain_letsencrypt_proxy_cert_with_nginx_webroot() {
   fi
 
   ensure_certbot
+  prepare_certbot_args "$host"
   mkdir -p "$webroot/.well-known/acme-challenge"
   chmod 755 "$webroot" "$webroot/.well-known" "$webroot/.well-known/acme-challenge"
 
@@ -553,33 +583,35 @@ EOF
   fi
 
   log "requesting Let's Encrypt certificate for $host via nginx webroot"
-  if ! certbot certonly --webroot -w "$webroot" --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
+  if ! certbot "${certbot_storage_args[@]}" certonly --webroot -w "$webroot" --non-interactive --agree-tos "${certbot_account_args[@]}" -d "$host"; then
     log "Let's Encrypt webroot certificate request failed for $host"
     return 1
   fi
 
-  cp "/etc/letsencrypt/live/$host/fullchain.pem" "$cert_path"
-  cp "/etc/letsencrypt/live/$host/privkey.pem" "$key_path"
-  chmod 644 "$cert_path"
-  chmod 600 "$key_path"
+  copy_letsencrypt_cert "$host" "$cert_path" "$key_path"
   install_renew_hook "$host"
   log "installed trusted Let's Encrypt proxy certificate for $host"
 }
 
 install_renew_hook() {
   local host="$1"
-  local hook_path="/etc/letsencrypt/renewal-hooks/deploy/vlf-proxy-${host}.sh"
+  local config_dir="${LETSENCRYPT_CONFIG_DIR:-/etc/letsencrypt-vlf-proxy}"
+  local work_dir="${LETSENCRYPT_WORK_DIR:-/var/lib/letsencrypt-vlf-proxy}"
+  local logs_dir="${LETSENCRYPT_LOGS_DIR:-/var/log/letsencrypt-vlf-proxy}"
+  local hook_path="$config_dir/renewal-hooks/deploy/vlf-proxy-${host}.sh"
+  local cron_path="/etc/cron.d/vlf-proxy-certbot-renew"
 
-  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  mkdir -p "$config_dir/renewal-hooks/deploy"
   cat >"$hook_path" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 APP_DIR="$INSTALL_DIR"
 DOMAIN="$host"
+CONFIG_DIR="$config_dir"
 
-cp "/etc/letsencrypt/live/\${DOMAIN}/fullchain.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.crt"
-cp "/etc/letsencrypt/live/\${DOMAIN}/privkey.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.key"
+cp "\${CONFIG_DIR}/live/\${DOMAIN}/fullchain.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.crt"
+cp "\${CONFIG_DIR}/live/\${DOMAIN}/privkey.pem" "\${APP_DIR}/deploy/runtime/tls/proxy.key"
 chmod 644 "\${APP_DIR}/deploy/runtime/tls/proxy.crt"
 chmod 600 "\${APP_DIR}/deploy/runtime/tls/proxy.key"
 
@@ -587,6 +619,10 @@ cd "\${APP_DIR}"
 docker compose --env-file .env -p vlf_chrome_proxy restart https-proxy
 EOF
   chmod +x "$hook_path"
+
+  cat >"$cron_path" <<EOF
+17 3 * * * root certbot --config-dir "$config_dir" --work-dir "$work_dir" --logs-dir "$logs_dir" renew --quiet
+EOF
 }
 
 detect_public_ipv4() {
