@@ -453,8 +453,12 @@ obtain_letsencrypt_proxy_cert() {
   fi
   validate_proxy_dns "$host" || return 1
   if ss -ltn "( sport = :80 )" | tail -n +2 | grep -q .; then
-    log "port 80 is already in use, cannot use certbot standalone for $host"
+    log "port 80 is already in use, trying nginx webroot certificate flow for $host"
     ss -ltnp "( sport = :80 )" || true
+    if obtain_letsencrypt_proxy_cert_with_nginx_webroot "$host" "$cert_path" "$key_path"; then
+      return 0
+    fi
+    log "nginx webroot certificate flow failed for $host"
     return 1
   fi
 
@@ -462,6 +466,60 @@ obtain_letsencrypt_proxy_cert() {
   log "requesting Let's Encrypt certificate for $host"
   if ! certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "$host"; then
     log "Let's Encrypt certificate request failed for $host, falling back to self-signed certificate"
+    return 1
+  fi
+
+  cp "/etc/letsencrypt/live/$host/fullchain.pem" "$cert_path"
+  cp "/etc/letsencrypt/live/$host/privkey.pem" "$key_path"
+  chmod 644 "$cert_path"
+  chmod 600 "$key_path"
+  install_renew_hook "$host"
+  log "installed trusted Let's Encrypt proxy certificate for $host"
+}
+
+obtain_letsencrypt_proxy_cert_with_nginx_webroot() {
+  local host="$1"
+  local cert_path="$2"
+  local key_path="$3"
+  local webroot="/var/www/vlf-letsencrypt"
+  local nginx_conf="/etc/nginx/conf.d/vlf-proxy-acme-${host}.conf"
+
+  if ! need_cmd nginx; then
+    log "nginx is not installed, cannot use nginx webroot certificate flow"
+    return 1
+  fi
+
+  ensure_certbot
+  mkdir -p "$webroot/.well-known/acme-challenge"
+  chmod 755 "$webroot" "$webroot/.well-known" "$webroot/.well-known/acme-challenge"
+
+  cat >"$nginx_conf" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $host;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root $webroot;
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
+}
+EOF
+
+  if ! nginx -t; then
+    log "nginx config test failed after adding $nginx_conf"
+    return 1
+  fi
+  if need_cmd systemctl && systemctl list-unit-files nginx.service >/dev/null 2>&1; then
+    systemctl reload nginx
+  else
+    nginx -s reload
+  fi
+
+  log "requesting Let's Encrypt certificate for $host via nginx webroot"
+  if ! certbot certonly --webroot -w "$webroot" --non-interactive --agree-tos --register-unsafely-without-email -d "$host"; then
+    log "Let's Encrypt webroot certificate request failed for $host"
     return 1
   fi
 
