@@ -408,9 +408,15 @@ migrate_env_file() {
 ensure_tls_material() {
   local cert_path="$INSTALL_DIR/deploy/runtime/tls/proxy.crt"
   local key_path="$INSTALL_DIR/deploy/runtime/tls/proxy.key"
+  local host="${PROXY_PUBLIC_HOST:-proxy.example.com}"
 
   if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
-    return
+    ensure_openssl
+    if openssl x509 -in "$cert_path" -noout -checkend 86400 >/dev/null 2>&1 && \
+      openssl x509 -in "$cert_path" -noout -checkhost "$host" >/dev/null 2>&1; then
+      return
+    fi
+    log "existing proxy TLS certificate is expired, expires soon, or does not match $host; requesting a replacement"
   fi
 
   if [ "${NODE_ROLE:-all_in_one}" = "proxy_node" ] || [ "${NODE_ROLE:-all_in_one}" = "all_in_one" ]; then
