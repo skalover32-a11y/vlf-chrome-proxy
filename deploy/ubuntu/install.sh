@@ -794,26 +794,32 @@ verify_proxy_tls() {
   local port="${HTTPS_PROXY_PORT:-1443}"
   local host="${PROXY_PUBLIC_HOST:-localhost}"
   local output_file
+  local verified="false"
+  local attempt
 
   ensure_openssl
   output_file="$(mktemp)"
-  if [ "${ALLOW_SELF_SIGNED_PROXY_CERT:-false}" = "true" ]; then
-    if ! timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" </dev/null >"$output_file" 2>&1; then
-      echo "HTTPS proxy TLS smoke check failed on 127.0.0.1:${port}" >&2
-      cat "$output_file" >&2 || true
-      rm -f "$output_file"
-      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 https-proxy || true
-      exit 1
+  for attempt in $(seq 1 30); do
+    : >"$output_file"
+    if [ "${ALLOW_SELF_SIGNED_PROXY_CERT:-false}" = "true" ]; then
+      if timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" </dev/null >"$output_file" 2>&1; then
+        verified="true"
+        break
+      fi
+    elif timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" -verify_hostname "$host" -verify_return_error </dev/null >"$output_file" 2>&1; then
+      verified="true"
+      break
     fi
-  else
-    if ! timeout 8 openssl s_client -connect "127.0.0.1:${port}" -servername "$host" -verify_hostname "$host" -verify_return_error </dev/null >"$output_file" 2>&1; then
-      echo "HTTPS proxy TLS verification failed for $host on local port $port." >&2
-      echo "Chrome will reject this proxy until PROXY_PUBLIC_HOST has a trusted matching certificate." >&2
-      cat "$output_file" >&2 || true
-      rm -f "$output_file"
-      docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 https-proxy || true
-      exit 1
-    fi
+    sleep 2
+  done
+
+  if [ "$verified" != "true" ]; then
+    echo "HTTPS proxy TLS verification failed for $host on local port $port." >&2
+    echo "Chrome will reject this proxy until PROXY_PUBLIC_HOST has a trusted matching certificate." >&2
+    cat "$output_file" >&2 || true
+    rm -f "$output_file"
+    docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$ENV_FILE" -p vlf_chrome_proxy logs --tail=120 https-proxy || true
+    exit 1
   fi
   rm -f "$output_file"
   log "https proxy TLS check ok for $host on port $port"
