@@ -168,6 +168,26 @@ prompt_role() {
   done
 }
 
+normalize_proxy_node_identity() {
+  local node_id country
+  node_id="$(printf '%s' "${NODE_DEFAULT_ID:-}" | tr '[:upper:]' '[:lower:]')"
+  country="$(printf '%s' "${NODE_DEFAULT_COUNTRY:-}" | tr '[:lower:]' '[:upper:]')"
+
+  if [[ ! "$node_id" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+    echo "NODE_DEFAULT_ID must use lowercase letters, digits, dots, underscores, or hyphens." >&2
+    exit 1
+  fi
+  if [[ ! "$country" =~ ^[A-Z]{2}$ ]]; then
+    echo "NODE_DEFAULT_COUNTRY must be a two-letter ISO code, for example FI or DE." >&2
+    exit 1
+  fi
+
+  set_env_value "NODE_DEFAULT_ID" "$node_id"
+  set_env_value "NODE_DEFAULT_COUNTRY" "$country"
+  export NODE_DEFAULT_ID="$node_id"
+  export NODE_DEFAULT_COUNTRY="$country"
+}
+
 configure_install_mode() {
   prompt_role
 
@@ -185,6 +205,7 @@ configure_install_mode() {
       prompt_value "NODE_DEFAULT_CITY" "Node city, for example Frankfurt" "Frankfurt" "true" "$force_proxy_prompts"
       prompt_value "PROXY_PUBLIC_HOST" "Public proxy host for this node, for example de1.example.com" "$(hostname -f 2>/dev/null || hostname -s 2>/dev/null || echo proxy.example.com)" "true" "$force_proxy_prompts"
       prompt_value "PROXY_PUBLIC_PORT" "Public proxy port" "1443" "true" "$force_proxy_prompts"
+      normalize_proxy_node_identity
       ;;
     central)
       prompt_value "BACKEND_PORT" "Public backend port" "18080" "true"
