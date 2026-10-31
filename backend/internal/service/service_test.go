@@ -3,8 +3,31 @@ package service
 import (
 	"testing"
 
+	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/remna"
 	"github.com/skalover32-a11y/vlf-chrome-proxy/backend/internal/repository"
 )
+
+func TestMapRemnaNodesNormalizesThreeLetterCountryCode(t *testing.T) {
+	nodes := mapRemnaNodes([]remna.Node{
+		{
+			Name:         "FIN - OUT",
+			Address:      "45.66.163.83",
+			CountryCode:  "FIN",
+			IsConnected:  true,
+			ViewPosition: 1,
+		},
+	}, RemnaNodeSyncConfig{RequireTag: "OUT", ProxyPort: 1443})
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected one mapped node, got %d", len(nodes))
+	}
+	if nodes[0].Country != "FI" {
+		t.Fatalf("expected normalized country FI, got %q", nodes[0].Country)
+	}
+	if nodes[0].ID != "fi-1" {
+		t.Fatalf("expected normalized node id fi-1, got %q", nodes[0].ID)
+	}
+}
 
 func TestApplyRegisteredProxyCandidatesFallsBackByCountry(t *testing.T) {
 	nodes := []repository.Node{

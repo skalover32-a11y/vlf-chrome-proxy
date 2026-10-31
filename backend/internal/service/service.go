@@ -804,7 +804,7 @@ func mapRemnaNodes(remnaNodes []remna.Node, syncConfig RemnaNodeSyncConfig) []re
 			continue
 		}
 
-		country := strings.ToUpper(strings.TrimSpace(item.CountryCode))
+		country := normalizeCountryCode(item.CountryCode)
 		if country == "" {
 			country = "UN"
 		}
@@ -917,12 +917,31 @@ func countryName(code string) string {
 		"NL": "Netherlands",
 		"PL": "Poland",
 		"RU": "Russia",
+		"SE": "Sweden",
 		"US": "United States",
 	}
 	if name, ok := names[strings.ToUpper(code)]; ok {
 		return name
 	}
 	return strings.ToUpper(code)
+}
+
+func normalizeCountryCode(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	aliases := map[string]string{
+		"DEU": "DE",
+		"FIN": "FI",
+		"LTU": "LT",
+		"NLD": "NL",
+		"POL": "PL",
+		"RUS": "RU",
+		"SWE": "SE",
+		"USA": "US",
+	}
+	if normalized, ok := aliases[code]; ok {
+		return normalized
+	}
+	return code
 }
 
 func (s *Service) ValidateProxyCredentials(ctx context.Context, username, password string) (bool, error) {
