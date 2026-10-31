@@ -684,8 +684,9 @@ func (s *Service) applyRegisteredProxyEndpoints(ctx context.Context, nodes []rep
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Reachability is authoritative here. A previous failed sync may have
+		// marked a self-registered endpoint offline even after it recovered.
 		if strings.TrimSpace(node.Host) == "" ||
-			!strings.EqualFold(strings.TrimSpace(node.Status), "online") ||
 			!chromeCompatibleProxyEndpoint(node.Host, node.ProxyPort, timeout, s.remnaNodeSync.AllowInsecureProxyTLS) {
 			continue
 		}
