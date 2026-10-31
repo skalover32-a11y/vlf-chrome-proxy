@@ -37,12 +37,6 @@ func main() {
 		log.Fatalf("validate proxy tls material: %v", err)
 	}
 
-	if runtime.Config.NodeRole == "proxy_node" {
-		if err := registerProxyNode(ctx, runtime); err != nil {
-			log.Fatalf("register proxy node: %v", err)
-		}
-	}
-
 	proxy := &httpsProxy{runtime: runtime}
 	server := &http.Server{
 		Addr:              runtime.Config.HTTPSProxyListenAddr,
@@ -58,8 +52,29 @@ func main() {
 		_ = server.Shutdown(context.Background())
 	}()
 
-	runtime.Logger.Info("https proxy listening", "addr", runtime.Config.HTTPSProxyListenAddr)
-	if err := server.ListenAndServeTLS(runtime.Config.HTTPSProxyTLSCertPath, runtime.Config.HTTPSProxyTLSKeyPath); err != nil && err != http.ErrServerClosed {
+	serverErrors := make(chan error, 1)
+	go func() {
+		runtime.Logger.Info("https proxy listening", "addr", runtime.Config.HTTPSProxyListenAddr)
+		err := server.ListenAndServeTLS(runtime.Config.HTTPSProxyTLSCertPath, runtime.Config.HTTPSProxyTLSKeyPath)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serverErrors <- err
+	}()
+
+	if err := waitForHTTPSProxyReady(ctx, runtime.Config.HTTPSProxyListenAddr, 15*time.Second); err != nil {
+		_ = server.Shutdown(context.Background())
+		log.Fatalf("wait for https proxy readiness: %v", err)
+	}
+
+	if runtime.Config.NodeRole == "proxy_node" {
+		if err := registerProxyNode(ctx, runtime); err != nil {
+			_ = server.Shutdown(context.Background())
+			log.Fatalf("register proxy node: %v", err)
+		}
+	}
+
+	if err := <-serverErrors; err != nil {
 		log.Fatalf("listen https proxy: %v", err)
 	}
 }
@@ -69,6 +84,48 @@ func validateTLSMaterial(runtime *app.Runtime) error {
 		return err
 	}
 	return nil
+}
+
+func waitForHTTPSProxyReady(ctx context.Context, listenAddr string, timeout time.Duration) error {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return fmt.Errorf("parse listen address: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	address := net.JoinHostPort(host, port)
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for {
+		dialer := &net.Dialer{Timeout: time.Second}
+		conn, dialErr := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+			// This probe only verifies the local listener. The central server still
+			// performs the public hostname and certificate validation.
+			InsecureSkipVerify: true, //nolint:gosec
+		})
+		if dialErr == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = dialErr
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("listener %s did not become ready: %w", address, lastErr)
+		}
+
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 type httpsProxy struct {
