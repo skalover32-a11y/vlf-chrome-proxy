@@ -675,50 +675,83 @@ func (s *Service) applyRegisteredProxyEndpoints(ctx context.Context, nodes []rep
 	if err != nil {
 		return fmt.Errorf("list registered nodes: %w", err)
 	}
-	registeredByID := make(map[string]repository.Node, len(registeredNodes))
-	registeredByCountry := make(map[string][]repository.Node, len(registeredNodes))
+	timeout := s.remnaNodeSync.ProxyCheckTimeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	reachable := make([]repository.Node, 0, len(registeredNodes))
 	for _, node := range registeredNodes {
-		registeredByID[node.ID] = node
-		if strings.TrimSpace(node.Host) == "" || !strings.EqualFold(strings.TrimSpace(node.Status), "online") {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if strings.TrimSpace(node.Host) == "" ||
+			!strings.EqualFold(strings.TrimSpace(node.Status), "online") ||
+			!chromeCompatibleProxyEndpoint(node.Host, node.ProxyPort, timeout, s.remnaNodeSync.AllowInsecureProxyTLS) {
 			continue
 		}
-		country := strings.ToUpper(strings.TrimSpace(node.Country))
-		if country == "" {
-			continue
-		}
-		registeredByCountry[country] = append(registeredByCountry[country], node)
+		reachable = append(reachable, node)
 	}
 
-	for idx := range nodes {
-		registered, ok := registeredByID[nodes[idx].ID]
-		if ok && sameNodeIdentity(nodes[idx], registered) && strings.TrimSpace(registered.Host) != "" {
-			applyRegisteredProxyEndpoint(&nodes[idx], registered)
-			continue
-		}
-
-		// Remna can reorder nodes or expose an IP while the Chrome-compatible
-		// proxy certificate is issued for the node public hostname. If there is
-		// exactly one live self-registered endpoint for the same country, prefer
-		// that endpoint before the TLS reachability check.
-		if registered, ok := uniqueRegisteredNodeForCountry(nodes[idx], registeredByCountry); ok {
-			applyRegisteredProxyEndpoint(&nodes[idx], registered)
-		}
-	}
+	applyRegisteredProxyCandidates(nodes, reachable)
 	return nil
 }
 
-func uniqueRegisteredNodeForCountry(node repository.Node, registeredByCountry map[string][]repository.Node) (repository.Node, bool) {
-	country := strings.ToUpper(strings.TrimSpace(node.Country))
-	if country == "" {
-		return repository.Node{}, false
+func applyRegisteredProxyCandidates(nodes []repository.Node, candidates []repository.Node) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return strings.ToLower(candidates[i].ID) < strings.ToLower(candidates[j].ID)
+	})
+
+	registeredByID := make(map[string]repository.Node, len(candidates))
+	registeredByCountry := make(map[string][]repository.Node, len(candidates))
+	seenEndpoints := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		country := strings.ToUpper(strings.TrimSpace(candidate.Country))
+		endpoint := proxyEndpointKey(candidate)
+		if country == "" || endpoint == "" {
+			continue
+		}
+		registeredByID[candidate.ID] = candidate
+		if _, seen := seenEndpoints[endpoint]; seen {
+			continue
+		}
+		seenEndpoints[endpoint] = struct{}{}
+		registeredByCountry[country] = append(registeredByCountry[country], candidate)
 	}
 
-	candidates := registeredByCountry[country]
-	if len(candidates) != 1 {
-		return repository.Node{}, false
+	usedEndpoints := make(map[string]struct{}, len(candidates))
+	matched := make([]bool, len(nodes))
+	for idx := range nodes {
+		registered, ok := registeredByID[nodes[idx].ID]
+		if ok && sameNodeIdentity(nodes[idx], registered) {
+			applyRegisteredProxyEndpoint(&nodes[idx], registered)
+			usedEndpoints[proxyEndpointKey(registered)] = struct{}{}
+			matched[idx] = true
+		}
 	}
 
-	return candidates[0], true
+	for idx := range nodes {
+		if matched[idx] {
+			continue
+		}
+		country := strings.ToUpper(strings.TrimSpace(nodes[idx].Country))
+		for _, candidate := range registeredByCountry[country] {
+			endpoint := proxyEndpointKey(candidate)
+			if _, used := usedEndpoints[endpoint]; used {
+				continue
+			}
+			applyRegisteredProxyEndpoint(&nodes[idx], candidate)
+			usedEndpoints[endpoint] = struct{}{}
+			break
+		}
+	}
+}
+
+func proxyEndpointKey(node repository.Node) string {
+	host := strings.ToLower(strings.TrimSpace(node.Host))
+	if host == "" || node.ProxyPort <= 0 {
+		return ""
+	}
+	return net.JoinHostPort(host, strconv.Itoa(node.ProxyPort))
 }
 
 func applyRegisteredProxyEndpoint(node *repository.Node, registered repository.Node) {
